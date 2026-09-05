@@ -39,3 +39,6 @@ build/
 *.xcuserstate
 xcuserdata/
 DerivedData/
+
+# Hugging Face 上傳用資料夾(權重 + model card)
+huggingface/
