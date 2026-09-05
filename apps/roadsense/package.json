@@ -1,0 +1,46 @@
+{
+  "name": "app",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "oxlint",
+    "preview": "vite preview",
+    "dev:phone": "HTTPS=1 vite --host",
+    "check:route": "tsx scripts/check-route.ts",
+    "check:twostage": "tsx scripts/selftest-twostage.ts"
+  },
+  "dependencies": {
+    "@turf/along": "^7.4.0",
+    "@turf/bearing": "^7.4.0",
+    "@turf/boolean-intersects": "^7.4.0",
+    "@turf/boolean-point-in-polygon": "^7.4.0",
+    "@turf/buffer": "^7.4.0",
+    "@turf/center": "^7.4.0",
+    "@turf/destination": "^7.4.0",
+    "@turf/distance": "^7.4.0",
+    "@turf/helpers": "^7.4.0",
+    "@turf/length": "^7.4.0",
+    "@turf/line-slice": "^7.4.0",
+    "@turf/line-slice-along": "^7.4.0",
+    "@turf/nearest-point-on-line": "^7.4.0",
+    "@types/mapbox-gl": "^3.4.1",
+    "lucide-react": "^1.41.0",
+    "mapbox-gl": "^3.30.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
+    "@vitejs/plugin-react": "^6.1.0",
+    "oxlint": "^1.79.0",
+    "tsx": "^4.23.13",
+    "typescript": "~6.0.2",
+    "vite": "^8.2.2"
+  }
+}

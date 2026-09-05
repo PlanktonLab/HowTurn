@@ -1,0 +1,15 @@
+{
+  "name": "毋機道 RoadSense",
+  "short_name": "毋機道",
+  "description": "台灣機車專屬導航：兩段式左轉提示、待轉格圖資、事故熱點",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4f5f7",
+  "theme_color": "#111214",
+  "icons": [
+    { "src": "./icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "./icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
