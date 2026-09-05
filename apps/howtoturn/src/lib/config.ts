@@ -22,7 +22,7 @@ export const LAYER_SOURCES = {
 
 export type LayerKey = keyof typeof LAYER_SOURCES | "complexIntersection" | "difficultRoad";
 
-// Layers RoadSense does not yet have real data for. Kept visible-but-disabled
+// Layers HowToTurn does not yet have real data for. Kept visible-but-disabled
 // in the layer control so the UI is honest about current coverage instead of
 // silently omitting the feature (see DATA_SOURCES.md).
 export const NOT_YET_AVAILABLE: LayerKey[] = ["complexIntersection", "difficultRoad"];

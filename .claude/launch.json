@@ -17,11 +17,11 @@
       "port": 8765
     },
     {
-      "name": "roadsense",
+      "name": "howtoturn",
       "runtimeExecutable": "npm",
       "runtimeArgs": [
         "--prefix",
-        "apps/roadsense",
+        "apps/howtoturn",
         "run",
         "dev",
         "--",

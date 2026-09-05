@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-先讀 `docs/PIPELINE.md`(整體流程與 GeoJSON 欄位定義)與 `apps/roadsense/README.md`(App 細節);根目錄 `README.md` 是對外的產品說明,截圖在 `docs/screenshots/`。本檔補充跨檔案才看得出來的架構與地雷。
+先讀 `docs/PIPELINE.md`(整體流程與 GeoJSON 欄位定義)與 `apps/howtoturn/README.md`(App 細節);根目錄 `README.md` 是對外的產品說明,截圖在 `docs/screenshots/`。本檔補充跨檔案才看得出來的架構與地雷。
 
 ## 常用指令
 
@@ -22,11 +22,11 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt   # torch / u
 
 ```bash
 # 純標準庫,系統 python3 即可
-python3 geodata/export_app.py                                  # geodata/output → apps/roadsense/public/geojson
+python3 geodata/export_app.py                                  # geodata/output → apps/howtoturn/public/geojson
 python3 -m http.server 8766 --bind 127.0.0.1                   # repo 根目錄;開 /apps/map-viewer/
 ```
 
-RoadSense(`apps/roadsense/`):
+HowToTurn(`apps/howtoturn/`):
 
 ```bash
 npm install && cp .env.example .env.local     # 填 VITE_MAPBOX_TOKEN(public token)
@@ -38,7 +38,7 @@ npm run lint                                  # oxlint
 npm run build                                 # tsc -b && vite build
 ```
 
-`.claude/launch.json` 已定義 `dieturn-map`(port 8765,根目錄靜態伺服)與 `roadsense`(port 5173)兩個 preview 設定。
+`.claude/launch.json` 已定義 `dieturn-map`(port 8765,根目錄靜態伺服)與 `howtoturn`(port 5173)兩個 preview 設定。
 
 沒有 pytest / vitest 之類的測試框架。驗證手段是 `check:twostage`、`check:route`,以及 `ml/crop_sheet.py`、`geodata/mapbox_check.py`、`geodata/overview_map.py` 這幾支人工抽查工具。
 
@@ -47,7 +47,7 @@ npm run build                                 # tsc -b && vite build
 兩個半邊,中間只有一道窄門:
 
 ```
-imagery/  抓圖 ──→ ml/  訓練+推論 ──→ geodata/  轉世界座標 ──→ export_app.py ──→ apps/roadsense/
+imagery/  抓圖 ──→ ml/  訓練+推論 ──→ geodata/  轉世界座標 ──→ export_app.py ──→ apps/howtoturn/
 (index.csv)        (detections.csv)   (dieturn.geojson)        (2 個 GeoJSON)     (純前端)
 ```
 
@@ -57,7 +57,7 @@ imagery/  抓圖 ──→ ml/  訓練+推論 ──→ geodata/  轉世界座�
 
 `geodata/export_app.py` 是 pipeline 與 App 之間唯一的橋樑,把稽核欄位(`src_px` 等)剝掉後輸出兩個檔:待轉格多邊形,以及 **2,556 個「看過的路口」點位**。後者是安全語意的關鍵 —— App 靠它區分「這裡我們看過、沒有待轉格」與「這裡沒有資料」。
 
-RoadSense 是**純前端**,沒有自家後端:Mapbox Directions / Nominatim 都由瀏覽器直呼,靜態 GeoJSON 從 `public/geojson/` 讀。分層:
+HowToTurn 是**純前端**,沒有自家後端:Mapbox Directions / Nominatim 都由瀏覽器直呼,靜態 GeoJSON 從 `public/geojson/` 讀。分層:
 
 - `lib/mapboxDirections.ts` 路由(機車走 driving-traffic profile,Mapbox 沒有機車 profile)
 - `lib/twoStageLeft.ts` 待轉判斷 —— 核心
@@ -66,11 +66,11 @@ RoadSense 是**純前端**,沒有自家後端:Mapbox Directions / Nominatim 都�
 
 ## 改動時要注意
 
-**兩段式左轉的規則寫了兩次,改一邊要想另一邊。** 道交規則 §99「先直行至前方路口右側待轉區」在兩處實作:離線的 `geodata/build_geodata.py:serves_bearings()`(從格子相對路口中心的位移,推算它服務哪個進入方位,寫進 `serves_from_bearing`),線上的 `apps/roadsense/src/lib/twoStageLeft.ts`(從路線的左轉 step 反過來找前方右象限 55 m 內的格子)。`npm run check:twostage` 就是拿前者當 ground truth 驗後者,改任一邊都要重跑它。
+**兩段式左轉的規則寫了兩次,改一邊要想另一邊。** 道交規則 §99「先直行至前方路口右側待轉區」在兩處實作:離線的 `geodata/build_geodata.py:serves_bearings()`(從格子相對路口中心的位移,推算它服務哪個進入方位,寫進 `serves_from_bearing`),線上的 `apps/howtoturn/src/lib/twoStageLeft.ts`(從路線的左轉 step 反過來找前方右象限 55 m 內的格子)。`npm run check:twostage` 就是拿前者當 ground truth 驗後者,改任一邊都要重跑它。
 
 **判斷單位是「左轉 step」不是「格子」。** 待轉格不是路線「經過」的東西,是服務某個特定進入方向的設施。三種狀態的安全預設是刻意的:找到格子 → `required`;沒找到但路口在航拍範圍內 → `direct`;不在範圍 → `unknown`(不敢說可以直接左轉 —— 說錯要罰單,多等一個燈只是慢一點)。
 
-**改 GeoJSON 欄位要同步三處**:`geodata/build_geodata.py` 的 `props`、`geodata/export_app.py` 的 `KEEP`、`apps/roadsense/src/lib/types.ts` 的 `WaitingZoneProps`。沒有 codegen,漏掉不會編譯錯。
+**改 GeoJSON 欄位要同步三處**:`geodata/build_geodata.py` 的 `props`、`geodata/export_app.py` 的 `KEEP`、`apps/howtoturn/src/lib/types.ts` 的 `WaitingZoneProps`。沒有 codegen,漏掉不會編譯錯。
 
 **turf 要 import 個別套件**(`@turf/buffer`),不要 `@turf/turf` —— 整包會在 dev 拖慢首次載入、build 多出好幾 MB(`lib/routeAnalysis.ts` 開頭有記錄)。
 
@@ -87,7 +87,7 @@ Mapbox token 是 public token,打包後會出現在 `dist/`,靠 Mapbox 後台的
 用 [Conventional Commits](https://www.conventionalcommits.org/):`<type>(<scope>): <描述>`。type 與 scope 用英文小寫,描述與 body 用繁體中文(維持既有 commit 風格)。
 
 ```
-feat(roadsense): 兩段式左轉提示分 required / direct / unknown 三種狀態
+feat(howtoturn): 兩段式左轉提示分 required / direct / unknown 三種狀態
 
 - 依 Directions 每個左轉的進入/離開方位，在路口 55 m 內找前方右側象限的待轉格
 - 不在航拍範圍的路口一律 unknown，不主張可直接左轉
@@ -96,7 +96,7 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
 ```
 
 - **type**:`feat` `fix` `refactor` `perf` `docs` `style` `test` `build` `chore` `revert`
-- **scope**(選填,對應目錄):`roadsense` `map-viewer` `ml` `imagery` `geodata` `datasets`
+- **scope**(選填,對應目錄):`howtoturn` `map-viewer` `ml` `imagery` `geodata` `datasets`
 - 描述用祈使句、不加句號,標題盡量 ≤ 72 字元
 - 破壞性變更在 type/scope 後加 `!`(例:`feat(geodata)!: 移除 dieturn.geojson 的 src_px 欄位`),並在 body 寫 `BREAKING CHANGE: <說明>`
-- 圖資重跑產生的 `geodata/output/` 與 `apps/roadsense/public/geojson/` 更新用 `chore(geodata): 重跑圖資`,不要跟程式修改混在同一個 commit
+- 圖資重跑產生的 `geodata/output/` 與 `apps/howtoturn/public/geojson/` 更新用 `chore(geodata): 重跑圖資`,不要跟程式修改混在同一個 commit

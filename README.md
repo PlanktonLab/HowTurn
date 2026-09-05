@@ -1,10 +1,21 @@
 <div align="center">
 
-# 毋機道 RoadSense
+# 毋機道 HowToTurn
+
+[![GitHub stars](https://img.shields.io/github/stars/PlanktonLab/HowTurn?style=flat&logo=github&color=24292e)](https://github.com/PlanktonLab/HowTurn/stargazers)
+[![Last commit](https://img.shields.io/github/last-commit/PlanktonLab/HowTurn?logo=git&logoColor=white&color=555)](https://github.com/PlanktonLab/HowTurn/commits/main)
+[![Hugging Face model](https://img.shields.io/badge/%F0%9F%A4%97%20Model-dieturn--yolo26s--obb-ffd21e)](https://huggingface.co/SamJiang0223/dieturn-yolo26s-obb)
+[![待轉格圖資](https://img.shields.io/badge/%E5%BE%85%E8%BD%89%E6%A0%BC-1%2C344%20%E6%A0%BC%20%C2%B7%20757%20%E8%B7%AF%E5%8F%A3-f97316)](#待轉格資料與模型)
+<br>
+![React](https://img.shields.io/badge/React-19-61dafb?logo=react&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-6-3178c6?logo=typescript&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-8-646cff?logo=vite&logoColor=white)
+![Mapbox GL JS](https://img.shields.io/badge/Mapbox%20GL%20JS-3-000000?logo=mapbox&logoColor=white)
+![PWA](https://img.shields.io/badge/PWA-installable-5a0fc8)
 
 **台灣機車專屬的即時導航。每一個左轉路口，都提前告訴你要不要兩段式待轉。**
 
-React 19 · Vite · Mapbox GL JS · 純前端，不需自架後端
+純前端，不需自架後端
 
 [前言](#為了讓騎士可以預先知道要靠左還是靠右) ·
 [功能](#功能) ·
@@ -85,7 +96,7 @@ python3 geodata/export_app.py
 
 | 目錄                        | 內容                                                                                        |
 | --------------------------- | ------------------------------------------------------------------------------------------- |
-| `apps/roadsense/`           | 本 App（React + Vite），細節見其 [README](apps/roadsense/README.md)                         |
+| `apps/howtoturn/`           | 本 App（React + Vite），細節見其 [README](apps/howtoturn/README.md)                         |
 | `apps/map-viewer/`          | 待轉格圖資的 Mapbox 檢視頁                                                                  |
 | `imagery/` `ml/` `geodata/` | 抓航拍圖、訓練與推論、轉世界座標並輸出 GeoJSON，流程見 [docs/PIPELINE.md](docs/PIPELINE.md) |
 | `datasets/`                 | 只有標註規範進 git；訓練影像受授權限制不隨 repo 散布                                        |
@@ -100,8 +111,8 @@ python3 geodata/export_app.py
 ### 安裝與啟動
 
 ```bash
-git clone https://github.com/xamjiang/HowTurn.git
-cd HowTurn/apps/roadsense
+git clone https://github.com/PlanktonLab/HowTurn.git
+cd HowTurn/apps/howtoturn
 npm install
 ```
 
@@ -153,4 +164,4 @@ npm run build      # tsc -b && vite build → dist/
 npm run preview    # 本機預覽打包結果
 ```
 
-`apps/roadsense/vite.config.ts` 使用相對路徑（`base: './'`），`dist/` 放到任何靜態主機或 GitHub Pages 的子路徑都能直接跑，不需改設定。
+`apps/howtoturn/vite.config.ts` 使用相對路徑（`base: './'`），`dist/` 放到任何靜態主機或 GitHub Pages 的子路徑都能直接跑，不需改設定。

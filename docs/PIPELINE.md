@@ -11,7 +11,7 @@
 | `imagery/` | 台北市 2556 個路口的 z21 航拍(都發局 2025 正射)與抓圖腳本 | 腳本與 `index.csv` ✅;圖片 ❌ |
 | `geodata/` | 把偵測框轉成世界座標、去重、輸出 GeoJSON | ✅(含 `output/` 成品) |
 | `apps/map-viewer/` | Mapbox GL 檢視頁 | ✅ |
-| `apps/roadsense/` | 機車導航 Web App(真實 GPS 導航 + 兩段式左轉提示),見根目錄 README 與其 README | ✅(`node_modules/` `dist/` `.env.local` ❌) |
+| `apps/howtoturn/` | 機車導航 Web App(真實 GPS 導航 + 兩段式左轉提示),見根目錄 README 與其 README | ✅(`node_modules/` `dist/` `.env.local` ❌) |
 
 沒進 git 的東西多數可以重生(見下方流程);訓練資料與權重要另外索取:`datasets/labeled/`(320 張標註圖)、`ml/weights/best_final.pt`(82 MB)、`imagery/taipei_z21/images/`(419 MB)。
 

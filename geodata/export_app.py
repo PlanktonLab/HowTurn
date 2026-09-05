@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""把 geodata/output 的成品匯出成 apps/roadsense 導航 App 讀的兩個 GeoJSON。
+"""把 geodata/output 的成品匯出成 apps/howtoturn 導航 App 讀的兩個 GeoJSON。
 
-  apps/roadsense/public/geojson/taipei_waiting_zones.geojson
+  apps/howtoturn/public/geojson/taipei_waiting_zones.geojson
       1344 個待轉格多邊形。屬性精簡成 App 需要的欄位(去掉像素框等稽核用資料)。
-  apps/roadsense/public/geojson/taipei_surveyed_intersections.geojson
+  apps/howtoturn/public/geojson/taipei_surveyed_intersections.geojson
       2556 個有航拍圖的路口中心點。App 用它判斷「這個路口我們看過了但沒有待轉格」
       (可直接左轉)與「這個路口不在航拍範圍」(無資料,不敢說可直接左轉)。
 
@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "geodata/output/dieturn.geojson"
 POINTS = ROOT / "imagery/points_taipei_z21.csv"
 INDEX = ROOT / "imagery/taipei_z21/index.csv"
-OUT_DIR = ROOT / "apps/roadsense/public/geojson"
+OUT_DIR = ROOT / "apps/howtoturn/public/geojson"
 
 KEEP = (
     "id", "status", "conf", "n_detections", "heading_deg", "length_m", "width_m",

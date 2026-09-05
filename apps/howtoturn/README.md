@@ -1,4 +1,4 @@
-# 毋機道 RoadSense — 機車導航 Web App
+# 毋機道 HowToTurn — 機車導航 Web App
 
 台灣機車專屬的即時導航。除了帶你到目的地，還會在每個左轉路口告訴你**要不要兩段式待轉**：
 需要待轉就提前提示靠右、進待轉格、等號誌；不需要就提示提前靠左直接左轉。
@@ -9,7 +9,7 @@ Mapbox GL JS + React + Vite，**純前端**：沒有自建後端，所有資料�
 ## 啟動
 
 ```bash
-cd apps/roadsense
+cd apps/howtoturn
 npm install
 cp .env.example .env.local   # 填入 Mapbox public token
 npm run dev                   # 桌機開發（模擬行駛可用）
