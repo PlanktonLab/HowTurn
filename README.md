@@ -6,15 +6,16 @@
 
 | 目錄 | 內容 | 進 git? |
 |---|---|---|
-| `datasets/labeled/` | 4 位標註者的原始標註(320 張 1024² 圖 + OBB label) | ✅ |
-| `datasets/dist_v1/` | 當初分發給標註者的包,與 labeled 重複 | ❌ |
+| `datasets/` | 標註規範(`ANNOTATION_GUIDE.md`)進 git;原始影像與標註檔只留本機 | 規範 ✅;`labeled/` `dist_v1/` ❌ |
 | `ml/` | 資料整併、訓練、推論、抽查工具 | 腳本 ✅;`dataset/` `runs/` `weights/` `archive/` ❌ |
 | `imagery/` | 台北市 2556 個路口的 z21 航拍(都發局 2025 正射)與抓圖腳本 | 腳本與 `index.csv` ✅;圖片 ❌ |
 | `geodata/` | 把偵測框轉成世界座標、去重、輸出 GeoJSON | ✅(含 `output/` 成品) |
 | `apps/map-viewer/` | Mapbox GL 檢視頁 | ✅ |
 | `apps/roadsense/` | 機車導航 Web App(真實 GPS 導航 + 兩段式左轉提示),見其 README | ✅(`node_modules/` `dist/` `.env.local` ❌) |
 
-沒進 git 的東西都可以重生(見下方流程),或找 Sam 拿:`ml/weights/best_final.pt`(82 MB)、`imagery/taipei_z21/images/`(419 MB)。
+沒進 git 的東西多數可以重生(見下方流程);訓練資料與權重要另外索取:`datasets/labeled/`(320 張標註圖)、`ml/weights/best_final.pt`(82 MB)、`imagery/taipei_z21/images/`(419 MB)。
+
+訓練影像來自臺北市都發局與國土測繪中心的正射影像服務。都發局的授權不允許轉供第三方流通,因此 `datasets/` 不隨 repo 散布 —— 要自行重建一套等價的訓練資料,取樣方式、類別定義與標註規則都寫在 [`datasets/ANNOTATION_GUIDE.md`](datasets/ANNOTATION_GUIDE.md)。
 
 ## 環境
 

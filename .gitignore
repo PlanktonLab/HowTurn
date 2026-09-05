@@ -13,8 +13,10 @@ ml/archive/
 ml/weights/
 ml/dataset/
 
-# 標註分發包(zip 與解壓後的副本;正式標註在 datasets/labeled)
-datasets/dist_v1/
+# 原始資料集只留在本機。航拍影像受來源條款限制不得對外流通,標註檔與分發包
+# 一併不進 git;repo 只保留 datasets/ANNOTATION_GUIDE.md 說明標註方式。
+datasets/*
+!datasets/ANNOTATION_GUIDE.md
 *.zip
 
 # 航拍圖資 800 MB+(index.csv 要留,是地理定位的依據)

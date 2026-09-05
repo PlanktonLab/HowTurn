@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""把 Labeled/ 下各標註者的資料整併成 YOLO OBB 訓練用的 train/val 目錄。
+"""把各標註者的資料整併成 YOLO OBB 訓練用的 train/val 目錄。
 
-來源結構: datasets/labeled/<labeler>/images/*.jpg  +  Labeled/<labeler>/labels/train/<stem>.txt
-輸出結構: ml/dataset/images/{train,val}/*.jpg    +  ml/dataset/labels/{train,val}/*.txt
+來源結構: datasets/labeled/<labeler>/images/*.jpg  +  datasets/labeled/<labeler>/labels/train/<stem>.txt
+輸出結構: ml/dataset/images/{train,val}/*.jpg      +  ml/dataset/labels/{train,val}/*.txt
 
 沒有對應 .txt 的圖片視為純背景負樣本(輸出空的 .txt)。
+
+datasets/ 不隨 repo 散布(影像受來源條款限制),標註方式見 datasets/ANNOTATION_GUIDE.md。
 """
 from __future__ import annotations
 
@@ -16,9 +18,9 @@ from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-# labeler_3 是原 原標註者 那批 80 張圖的重標版(對應 dataset_v1/labeler_3),
-# 原標註者 只標了 2/80 未標完,已由使用者移除,改用 labeler_3。
-LABELERS = ["labeler_3", "labeler_2", "labeler_4", "labeler_1"]
+# 四位標註者各 80 張,編號沿用當初分發時的 manifest。labeler_3 那批是重標版:
+# 原先分配到的標註者只完成 2/80,該批圖後來重新分派標完。
+LABELERS = ["labeler_1", "labeler_2", "labeler_3", "labeler_4"]
 CLASS_NAMES = {0: "DieTurn"}
 
 
