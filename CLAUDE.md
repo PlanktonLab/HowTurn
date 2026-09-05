@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-先讀 `README.md`(整體流程與 GeoJSON 欄位定義)與 `apps/roadsense/README.md`(App 細節)。本檔補充跨檔案才看得出來的架構與地雷。
+先讀 `docs/PIPELINE.md`(整體流程與 GeoJSON 欄位定義)與 `apps/roadsense/README.md`(App 細節);根目錄 `README.md` 是對外的產品說明,截圖在 `docs/screenshots/`。本檔補充跨檔案才看得出來的架構與地雷。
 
 ## 常用指令
 
