@@ -1,0 +1,27 @@
+{
+  "images": 2556,
+  "detections_kept": 1514,
+  "dieturn_total": 1344,
+  "auto": 1099,
+  "review": 245,
+  "merged_from_multiple_images": 143,
+  "intersections_with_dieturn": 757,
+  "corner_distribution": {
+    "SE": 301,
+    "NE": 344,
+    "NW": 365,
+    "SW": 334
+  },
+  "serves_quality": {
+    "good": 1041,
+    "ambiguous": 303
+  },
+  "model_version": "yolo26s-obb_ep144",
+  "imagery_source": "taipei_udd_ortho_2025",
+  "thresholds": {
+    "auto": 0.8,
+    "review": 0.5,
+    "merge_iou": 0.3,
+    "merge_dist_m": 1.5
+  }
+}

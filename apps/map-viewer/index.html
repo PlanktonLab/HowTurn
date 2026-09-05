@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DieTurn — 台北市待轉格圖資</title>
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.8.0/mapbox-gl.css" rel="stylesheet">
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.8.0/mapbox-gl.js"></script>
+<style>
+  :root { --auto: #22d3ee; --review: #f59e0b; --panel: rgba(17, 24, 39, .92); --fg: #e5e7eb; --muted: #9ca3af; }
+  html, body { margin: 0; height: 100%; font-family: -apple-system, "PingFang TC", "Noto Sans TC", system-ui, sans-serif; }
+  #map { position: absolute; inset: 0; }
+  .panel { position: absolute; top: 12px; left: 12px; width: 280px; background: var(--panel); color: var(--fg);
+           border-radius: 10px; padding: 14px 16px; box-shadow: 0 4px 16px rgba(0,0,0,.35); font-size: 13px; z-index: 5; }
+  .panel h1 { margin: 0 0 4px; font-size: 16px; font-weight: 600; }
+  .panel .sub { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin: 8px 0 12px; }
+  .stat b { display: block; font-size: 20px; font-weight: 600; line-height: 1.1; }
+  .stat span { color: var(--muted); font-size: 11px; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+  .row label { flex: 1; }
+  .sw { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: -1px; margin-right: 6px; }
+  input[type=range] { width: 100%; }
+  select, button { background: #1f2937; color: var(--fg); border: 1px solid #374151; border-radius: 6px; padding: 5px 8px; font-size: 12px; }
+  button { cursor: pointer; }
+  .hint { color: var(--muted); font-size: 11px; margin-top: 8px; line-height: 1.5; }
+  .mapboxgl-popup-content { font-size: 12px; line-height: 1.5; min-width: 240px; color: #111; }
+  .mapboxgl-popup-content h3 { margin: 0 0 6px; font-size: 13px; }
+  .mapboxgl-popup-content img { width: 240px; height: 240px; object-fit: cover; border-radius: 6px; display: block; margin-top: 6px; }
+  .mapboxgl-popup-content table { border-collapse: collapse; }
+  .mapboxgl-popup-content td { padding: 1px 6px 1px 0; vertical-align: top; }
+  .mapboxgl-popup-content td:first-child { color: #6b7280; white-space: nowrap; }
+  .badge { display: inline-block; padding: 1px 6px; border-radius: 4px; color: #111; font-weight: 600; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="panel">
+  <h1>台北市待轉格圖資</h1>
+  <div class="sub" id="meta">載入中…</div>
+  <div id="token-box" hidden style="margin-bottom:10px">
+    <input id="token-in" type="password" placeholder="貼上 Mapbox public token (pk.…)" style="width:100%;box-sizing:border-box;background:#1f2937;color:var(--fg);border:1px solid #374151;border-radius:6px;padding:6px 8px;font-size:12px;margin-bottom:6px">
+    <button id="token-go" style="width:100%">載入地圖</button>
+    <div class="hint">token 只存在這個瀏覽器的 localStorage,不會上傳到別處。</div>
+  </div>
+  <div class="stats">
+    <div class="stat"><b id="n-total">–</b><span>顯示中</span></div>
+    <div class="stat"><b id="n-inter">–</b><span>路口</span></div>
+    <div class="stat"><b id="n-auto" style="color:var(--auto)">–</b><span>自動接受 (≥0.8)</span></div>
+    <div class="stat"><b id="n-review" style="color:var(--review)">–</b><span>待複核 (0.5–0.8)</span></div>
+  </div>
+  <div class="row"><input type="checkbox" id="f-auto" checked><label for="f-auto"><i class="sw" style="background:var(--auto)"></i>自動接受</label></div>
+  <div class="row"><input type="checkbox" id="f-review" checked><label for="f-review"><i class="sw" style="background:var(--review)"></i>待複核</label></div>
+  <div class="row" style="margin-top:10px"><label for="f-conf">最低信心 <b id="conf-val">0.50</b></label></div>
+  <input type="range" id="f-conf" min="0.5" max="0.98" step="0.01" value="0.5">
+  <div class="row" style="margin-top:10px">
+    <select id="style">
+      <option value="mapbox://styles/mapbox/satellite-streets-v12">衛星 + 路名</option>
+      <option value="mapbox://styles/mapbox/satellite-v9">純衛星</option>
+      <option value="mapbox://styles/mapbox/streets-v12">街道</option>
+      <option value="mapbox://styles/mapbox/dark-v11">深色</option>
+    </select>
+    <button id="fit">全部範圍</button>
+    <button id="rand">隨機跳</button>
+  </div>
+  <div class="hint">放大到 16 級以上會顯示旋轉框;縮小時是聚合點。點框或點看細節與原始航拍。</div>
+</div>
+<script>
+let map;
+// --- token:只從 URL hash、localStorage 或頁面輸入框取,不寫在程式碼裡 ---
+const hash = new URLSearchParams(location.hash.slice(1));
+const saved = hash.get('token') || localStorage.getItem('mapbox_token');
+if (hash.has('token')) history.replaceState(null, '', location.pathname + location.search);
+if (saved) {
+  start(saved);
+} else {
+  document.getElementById('meta').textContent = '需要 Mapbox token 才能載入底圖';
+  document.getElementById('token-box').hidden = false;
+  const go = () => { const t = document.getElementById('token-in').value.trim(); if (t.startsWith('pk.')) start(t); };
+  document.getElementById('token-go').addEventListener('click', go);
+  document.getElementById('token-in').addEventListener('keydown', e => { if (e.key === 'Enter') go(); });
+}
+
+async function start(token) {
+  localStorage.setItem('mapbox_token', token);
+  document.getElementById('token-box').hidden = true;
+  document.getElementById('meta').textContent = '載入中…';
+  mapboxgl.accessToken = token;
+  map = null;
+
+  const [polys, pts, summary] = await Promise.all([
+    fetch('../../geodata/output/dieturn.geojson').then(r => r.json()),
+    fetch('../../geodata/output/dieturn_points.geojson').then(r => r.json()),
+    fetch('../../geodata/output/summary.json').then(r => r.json()).catch(() => null),
+  ]);
+  if (summary) document.getElementById('meta').textContent =
+    `${summary.model_version} · ${summary.imagery_source} · ${summary.images} 張圖 → ${summary.dieturn_total} 個待轉格`;
+
+  const bounds = new mapboxgl.LngLatBounds();
+  pts.features.forEach(f => bounds.extend(f.geometry.coordinates));
+
+  map = new mapboxgl.Map({
+    container: 'map',
+    style: document.getElementById('style').value,
+    bounds, fitBoundsOptions: { padding: 40 },
+    attributionControl: true,
+  });
+  map.addControl(new mapboxgl.NavigationControl(), 'top-right');
+  map.addControl(new mapboxgl.ScaleControl({ unit: 'metric' }), 'bottom-right');
+
+  const STATUS_COLOR = ['match', ['get', 'status'], 'auto', '#22d3ee', 'review', '#f59e0b', '#9ca3af'];
+
+  function currentFilter() {
+    const minConf = parseFloat(document.getElementById('f-conf').value);
+    const allow = new Set();
+    if (document.getElementById('f-auto').checked) allow.add('auto');
+    if (document.getElementById('f-review').checked) allow.add('review');
+    return f => f.properties.conf >= minConf && allow.has(f.properties.status);
+  }
+  function filtered(fc) { return { type: 'FeatureCollection', features: fc.features.filter(currentFilter()) }; }
+
+  function updateStats() {
+    const shown = polys.features.filter(currentFilter());
+    document.getElementById('n-total').textContent = shown.length;
+    document.getElementById('n-auto').textContent = shown.filter(f => f.properties.status === 'auto').length;
+    document.getElementById('n-review').textContent = shown.filter(f => f.properties.status === 'review').length;
+    document.getElementById('n-inter').textContent = new Set(shown.map(f => f.properties.intersection_id)).size;
+  }
+
+  function addData() {
+    if (map.getSource('dt-poly')) return;
+    map.addSource('dt-poly', { type: 'geojson', data: filtered(polys) });
+    map.addSource('dt-pts', { type: 'geojson', data: filtered(pts), cluster: true, clusterMaxZoom: 15, clusterRadius: 40 });
+
+    map.addLayer({ id: 'clusters', type: 'circle', source: 'dt-pts', filter: ['has', 'point_count'],
+      paint: { 'circle-color': '#0ea5e9', 'circle-opacity': .85, 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5,
+               'circle-radius': ['step', ['get', 'point_count'], 14, 10, 18, 50, 24, 200, 30] } });
+    map.addLayer({ id: 'cluster-count', type: 'symbol', source: 'dt-pts', filter: ['has', 'point_count'],
+      layout: { 'text-field': ['get', 'point_count_abbreviated'], 'text-size': 12, 'text-font': ['DIN Pro Medium', 'Arial Unicode MS Bold'] },
+      paint: { 'text-color': '#fff' } });
+    map.addLayer({ id: 'points', type: 'circle', source: 'dt-pts', filter: ['!', ['has', 'point_count']], maxzoom: 17,
+      paint: { 'circle-color': STATUS_COLOR, 'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 3, 16, 7],
+               'circle-stroke-color': '#111', 'circle-stroke-width': 1 } });
+    map.addLayer({ id: 'poly-fill', type: 'fill', source: 'dt-poly', minzoom: 16,
+      paint: { 'fill-color': STATUS_COLOR, 'fill-opacity': .3 } });
+    map.addLayer({ id: 'poly-line', type: 'line', source: 'dt-poly', minzoom: 16,
+      paint: { 'line-color': STATUS_COLOR, 'line-width': ['interpolate', ['linear'], ['zoom'], 16, 1.5, 20, 3] } });
+
+    map.on('click', 'clusters', e => {
+      const f = map.queryRenderedFeatures(e.point, { layers: ['clusters'] })[0];
+      map.getSource('dt-pts').getClusterExpansionZoom(f.properties.cluster_id, (err, z) => {
+        if (!err) map.easeTo({ center: f.geometry.coordinates, zoom: z });
+      });
+    });
+    for (const layer of ['points', 'poly-fill']) {
+      map.on('click', layer, e => showPopup(e.features[0], e.lngLat));
+      map.on('mouseenter', layer, () => map.getCanvas().style.cursor = 'pointer');
+      map.on('mouseleave', layer, () => map.getCanvas().style.cursor = '');
+    }
+    map.on('mouseenter', 'clusters', () => map.getCanvas().style.cursor = 'pointer');
+    map.on('mouseleave', 'clusters', () => map.getCanvas().style.cursor = '');
+    updateStats();
+  }
+
+  let popup;
+  function showPopup(f, lngLat) {
+    const p = f.properties;
+    const color = p.status === 'auto' ? '#22d3ee' : '#f59e0b';
+    const img = `../../ml/runs/predict_taipei_full/detections/${p.src_image}.jpg`;
+    const html = `<h3>${p.id} <span class="badge" style="background:${color}">${p.status} · ${Number(p.conf).toFixed(2)}</span></h3>
+      <table>
+        <tr><td>尺寸</td><td>${p.length_m} m × ${p.width_m} m,方位 ${p.heading_deg}°</td></tr>
+        <tr><td>路口</td><td>${p.intersection_id} 的 ${p.corner} 角(距中心 ${p.intersection_dist_m} m)</td></tr>
+        <tr><td>偵測</td><td>${p.n_detections} 次,代表圖 ${p.src_image}</td></tr>
+        <tr><td>座標</td><td>${p.lat}, ${p.lon}</td></tr>
+      </table>
+      <a href="${img}" target="_blank"><img src="${img}" alt="航拍 ${p.src_image}" loading="lazy"></a>`;
+    if (popup) popup.remove();
+    popup = new mapboxgl.Popup({ maxWidth: '300px' }).setLngLat(lngLat).setHTML(html).addTo(map);
+  }
+
+  function applyFilters() {
+    map.getSource('dt-poly').setData(filtered(polys));
+    map.getSource('dt-pts').setData(filtered(pts));
+    updateStats();
+  }
+  map.on('style.load', addData);
+  ['f-auto', 'f-review'].forEach(id => document.getElementById(id).addEventListener('change', applyFilters));
+  document.getElementById('f-conf').addEventListener('input', e => {
+    document.getElementById('conf-val').textContent = Number(e.target.value).toFixed(2); applyFilters();
+  });
+  document.getElementById('style').addEventListener('change', e => map.setStyle(e.target.value));
+  document.getElementById('fit').addEventListener('click', () => map.fitBounds(bounds, { padding: 40 }));
+  document.getElementById('rand').addEventListener('click', () => {
+    const shown = pts.features.filter(currentFilter());
+    if (!shown.length) return;
+    const f = shown[Math.floor(Math.random() * shown.length)];
+    map.flyTo({ center: f.geometry.coordinates, zoom: 19 });
+  });
+}
+</script>
+</body>
+</html>

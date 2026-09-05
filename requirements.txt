@@ -1,0 +1,9 @@
+# 訓練 / 推論 / 圖資建置共用。macOS Apple Silicon 直接 pip install 即可(torch 走 MPS)。
+ultralytics==8.4.140
+torch==2.14.0
+torchvision==0.29.0
+shapely==2.1.2
+requests==2.34.2
+pillow==12.3.0
+numpy==2.5.2
+opencv-python==5.0.0.93

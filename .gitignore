@@ -1,0 +1,39 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# 模型權重與訓練/推論產物(可重生;權重另外傳)
+*.pt
+ml/runs/
+ml/archive/
+ml/weights/
+ml/dataset/
+
+# 標註分發包(zip 與解壓後的副本;正式標註在 datasets/labeled)
+datasets/dist_v1/
+*.zip
+
+# 航拍圖資 800 MB+(index.csv 要留,是地理定位的依據)
+imagery/taipei_z21/images/
+imagery/taipei_z21/tiles/
+imagery/*.pid
+imagery/*.out
+*.log
+
+# 檢視用暫存圖
+geodata/output/mapbox_check/
+
+# 黑客松 app 常見
+node_modules/
+dist/
+build/
+.env
+.env.*
+!.env.example
+*.xcuserstate
+xcuserdata/
+DerivedData/
