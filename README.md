@@ -1,5 +1,8 @@
 <div align="center">
-
+<p align="center">
+  <img src="./HowTurn.png" alt="HowTurn" width="100%" />
+</p>
+  
 # 毋機道 HowToTurn
 
 [![Hugging Face model](https://img.shields.io/badge/%F0%9F%A4%97%20Model-dieturn--yolo26s--obb-ffd21e)](https://huggingface.co/SamJiang0223/dieturn-yolo26s-obb)
