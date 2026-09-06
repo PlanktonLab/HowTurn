@@ -162,3 +162,9 @@ npm run preview    # 本機預覽打包結果
 ```
 
 `apps/howtoturn/vite.config.ts` 使用相對路徑（`base: './'`），`dist/` 放到任何靜態主機或 GitHub Pages 的子路徑都能直接跑，不需改設定。
+
+
+## License
+
+This project is licensed under the Apache License 2.0.
+See the [LICENSE](LICENSE) file for details.
