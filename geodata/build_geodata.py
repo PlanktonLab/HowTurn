@@ -21,20 +21,21 @@ from shapely.geometry import Polygon
 from shapely.strtree import STRtree
 
 ROOT = Path(__file__).resolve().parent.parent
-Z = 21  # 圖資瓦片層級
-# 台北範圍的局部公制座標:以此為原點做等距圓柱投影,幾十公里內誤差可忽略
+Z_DEFAULT = 21  # index.csv 沒有 zoom 欄時的回退層級
+# 局部公制座標:以資料範圍中心為原點做等距圓柱投影,原點由 set_origin() 依實際資料設定。
+# 全台尺度下 x 軸比例在南北兩端各約 1.5% 偏差,對 4.8 m 的框約 7 cm,不影響判讀。
 LAT0, LON0 = 25.05, 121.55
 M_PER_DEG_LAT = 110_574.0
 M_PER_DEG_LON = 111_320.0 * math.cos(math.radians(LAT0))
 
-AUTO_CONF = 0.80  # 以上自動接受
+AUTO_CONF = 0.80  # 以上自動接受(z20 信心分佈整體下移,用 --auto-conf 重新校準)
 REVIEW_CONF = 0.50  # 以上進入複核;以下丟棄(抽查顯示幾乎全是誤報)
 MERGE_IOU = 0.30  # 跨圖同一個待轉格的合併門檻
 MERGE_DIST_M = 1.5
 
 
 def px2ll(rec: dict, px: float, py: float) -> tuple[float, float]:
-    n = 2**Z
+    n = 2 ** int(rec.get("zoom") or Z_DEFAULT)
     X = int(rec["tile_x0"]) + px / 256
     Y = int(rec["tile_y0"]) + py / 256
     lon = X / n * 360 - 180
@@ -48,6 +49,13 @@ def to_m(lon: float, lat: float) -> tuple[float, float]:
 
 def to_ll(x: float, y: float) -> tuple[float, float]:
     return x / M_PER_DEG_LON + LON0, y / M_PER_DEG_LAT + LAT0
+
+
+def set_origin(lat0: float, lon0: float) -> None:
+    """把投影原點移到資料中心。跨縣市掃描時必須呼叫,否則 x 軸比例會以台北為準。"""
+    global LAT0, LON0, M_PER_DEG_LON
+    LAT0, LON0 = lat0, lon0
+    M_PER_DEG_LON = 111_320.0 * math.cos(math.radians(LAT0))
 
 
 _B32 = "0123456789bcdefghjkmnpqrstuvwxyz"
@@ -118,17 +126,25 @@ class UnionFind:
 
 
 def main() -> None:
+    global AUTO_CONF, REVIEW_CONF
     ap = argparse.ArgumentParser()
     ap.add_argument("--detections", type=Path, default=ROOT / "ml/runs/predict_taipei_full/detections.csv")
     ap.add_argument("--index", type=Path, default=ROOT / "imagery/taipei_z21/index.csv")
     ap.add_argument("--out", type=Path, default=ROOT / "geodata/output")
     ap.add_argument("--model-version", default="yolo26s-obb_ep144")
     ap.add_argument("--imagery-source", default="taipei_udd_ortho_2025")
+    ap.add_argument("--auto-conf", type=float, default=AUTO_CONF)
+    ap.add_argument("--review-conf", type=float, default=REVIEW_CONF)
     args = ap.parse_args()
+    AUTO_CONF, REVIEW_CONF = args.auto_conf, args.review_conf
 
-    idx = {r["id"]: r for r in csv.DictReader(args.index.open())}
+    idx = {r["id"]: r for r in csv.DictReader(args.index.open(encoding="utf-8"))}
+    # 投影原點取資料範圍中心,讓比例誤差平均分攤到南北兩端
+    lats = [float(r["lat"]) for r in idx.values()]
+    lons = [float(r["lon"]) for r in idx.values()]
+    set_origin((min(lats) + max(lats)) / 2, (min(lons) + max(lons)) / 2)
     dets = []
-    for r in csv.DictReader(args.detections.open()):
+    for r in csv.DictReader(args.detections.open(encoding="utf-8")):
         conf = float(r["conf"])
         if conf < REVIEW_CONF:
             continue
@@ -245,13 +261,13 @@ def main() -> None:
     review_rows.sort(key=lambda r: -r["conf"])
 
     args.out.mkdir(parents=True, exist_ok=True)
-    (args.out / "dieturn.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": features}, ensure_ascii=False))
-    (args.out / "dieturn_points.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": point_features}, ensure_ascii=False))
-    with (args.out / "review.csv").open("w", newline="") as fh:
+    (args.out / "dieturn.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": features}, ensure_ascii=False), encoding="utf-8")
+    (args.out / "dieturn_points.geojson").write_text(json.dumps({"type": "FeatureCollection", "features": point_features}, ensure_ascii=False), encoding="utf-8")
+    with (args.out / "review.csv").open("w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=list(review_rows[0].keys()) if review_rows else ["id"])
         w.writeheader()
         w.writerows(review_rows)
-    with (args.out / "detections_geo.csv").open("w", newline="") as fh:
+    with (args.out / "detections_geo.csv").open("w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=["dieturn_id", "image", "conf", "src_px", "is_representative"])
         w.writeheader()
         w.writerows(det_rows)
@@ -271,7 +287,7 @@ def main() -> None:
         "imagery_source": args.imagery_source,
         "thresholds": {"auto": AUTO_CONF, "review": REVIEW_CONF, "merge_iou": MERGE_IOU, "merge_dist_m": MERGE_DIST_M},
     }
-    (args.out / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2))
+    (args.out / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     print(f"\n輸出目錄: {args.out}")
 
