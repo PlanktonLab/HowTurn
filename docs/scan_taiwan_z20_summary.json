@@ -1,0 +1,27 @@
+{
+  "images": 29925,
+  "detections_kept": 10930,
+  "dieturn_total": 9735,
+  "auto": 6839,
+  "review": 2896,
+  "merged_from_multiple_images": 998,
+  "intersections_with_dieturn": 6000,
+  "corner_distribution": {
+    "NE": 2507,
+    "SW": 2391,
+    "SE": 2164,
+    "NW": 2673
+  },
+  "serves_quality": {
+    "good": 7904,
+    "ambiguous": 1831
+  },
+  "model_version": "dieturn-yolo26s-obb-v0.5",
+  "imagery_source": "nlsc_photo2025_z20",
+  "thresholds": {
+    "auto": 0.8,
+    "review": 0.5,
+    "merge_iou": 0.3,
+    "merge_dist_m": 1.5
+  }
+}
