@@ -30,8 +30,8 @@ KEEP = (
 
 
 def main() -> None:
-    src = json.loads(SRC.read_text())
-    summary = json.loads((ROOT / "geodata/output/summary.json").read_text())
+    src = json.loads(SRC.read_text(encoding="utf-8"))
+    summary = json.loads((ROOT / "geodata/output/summary.json").read_text(encoding="utf-8"))
     today = date.today().isoformat()
     source = f"dieturn/{summary['model_version']}@{summary['imagery_source']}"
 
@@ -44,9 +44,9 @@ def main() -> None:
         props["source_updated_at"] = today
         zones.append({"type": "Feature", "id": p["id"], "properties": props, "geometry": f["geometry"]})
 
-    ok_images = {r["id"] for r in csv.DictReader(INDEX.open()) if r["status"] == "ok"}
+    ok_images = {r["id"] for r in csv.DictReader(INDEX.open(encoding="utf-8")) if r["status"] == "ok"}
     surveyed = []
-    for r in csv.DictReader(POINTS.open()):
+    for r in csv.DictReader(POINTS.open(encoding="utf-8")):
         if r["id"] not in ok_images:
             continue
         surveyed.append({
@@ -58,10 +58,12 @@ def main() -> None:
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     (OUT_DIR / "taipei_waiting_zones.geojson").write_text(
-        json.dumps({"type": "FeatureCollection", "features": zones}, ensure_ascii=False, separators=(",", ":"))
+        json.dumps({"type": "FeatureCollection", "features": zones}, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
     )
     (OUT_DIR / "taipei_surveyed_intersections.geojson").write_text(
-        json.dumps({"type": "FeatureCollection", "features": surveyed}, ensure_ascii=False, separators=(",", ":"))
+        json.dumps({"type": "FeatureCollection", "features": surveyed}, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
     )
     print(f"waiting zones: {len(zones)}  surveyed intersections: {len(surveyed)}  -> {OUT_DIR}")
 

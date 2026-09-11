@@ -35,7 +35,7 @@ def main() -> None:
     args = ap.parse_args()
     token = os.environ.get("MAPBOX_TOKEN") or exit("請設定 MAPBOX_TOKEN")
 
-    fc = json.loads(args.points.read_text())
+    fc = json.loads(args.points.read_text(encoding="utf-8"))
     pts = [(f["geometry"]["coordinates"], f["properties"]["status"]) for f in fc["features"]]
     lons = [p[0][0] for p in pts]
     lats = [p[0][1] for p in pts]

@@ -31,7 +31,7 @@ def pick_device(requested: str) -> str:
 def load_geo(index_csv: Path) -> dict[str, tuple[str, str]]:
     if not index_csv.is_file():
         return {}
-    with index_csv.open() as fh:
+    with index_csv.open(encoding="utf-8") as fh:
         return {r["id"]: (r["lat"], r["lon"]) for r in csv.DictReader(fh)}
 
 
@@ -82,10 +82,12 @@ def main() -> None:
 
     for i in range(0, len(images), args.batch):
         chunk = images[i : i + args.batch]
-        for res in model.predict(
+        # 結果順序與輸入一致。不能用 res.path:批次推論時 ultralytics 會把它換成
+        # image0.jpg 這種序號,檔名一丟就接不回 index.csv 的 lat/lon。
+        results = model.predict(
             chunk, imgsz=args.imgsz, conf=args.conf, device=device, verbose=False
-        ):
-            src = Path(res.path)
+        )
+        for src, res in zip(chunk, results):
             obb = res.obb
             n = 0 if obb is None else len(obb)
             hist[min(n, 5)] += 1
@@ -111,7 +113,7 @@ def main() -> None:
 
     args.out.mkdir(parents=True, exist_ok=True)
     csv_path = args.out / "detections.csv"
-    with csv_path.open("w", newline="") as fh:
+    with csv_path.open("w", newline="", encoding="utf-8") as fh:
         w = csv.DictWriter(fh, fieldnames=["image", "lat", "lon", "conf", "corners"])
         w.writeheader()
         w.writerows(sorted(rows, key=lambda r: -r["conf"]))

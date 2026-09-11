@@ -43,9 +43,9 @@ def main() -> None:
     if not token:
         raise SystemExit("請設定環境變數 MAPBOX_TOKEN")
 
-    idx = {r["id"]: r for r in csv.DictReader(args.index.open())}
+    idx = {r["id"]: r for r in csv.DictReader(args.index.open(encoding="utf-8"))}
     dets: dict[str, list[dict]] = {}
-    for r in csv.DictReader(args.detections.open()):
+    for r in csv.DictReader(args.detections.open(encoding="utf-8")):
         dets.setdefault(r["image"][:-4], []).append(r)
     args.out.mkdir(parents=True, exist_ok=True)
 
