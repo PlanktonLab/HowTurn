@@ -12,8 +12,8 @@ const env = readFileSync(new URL("../.env.local", import.meta.url), "utf8");
 const token = env.match(/VITE_MAPBOX_TOKEN=(\S+)/)?.[1];
 if (!token) throw new Error("no token in .env.local");
 
-const zones = JSON.parse(readFileSync(new URL("../public/geojson/taipei_waiting_zones.geojson", import.meta.url), "utf8"));
-const surveyed = JSON.parse(readFileSync(new URL("../public/geojson/taipei_surveyed_intersections.geojson", import.meta.url), "utf8"));
+const zones = JSON.parse(readFileSync(new URL("../public/geojson/taiwan_waiting_zones.geojson", import.meta.url), "utf8"));
+const surveyed = JSON.parse(readFileSync(new URL("../public/geojson/taiwan_surveyed_intersections.geojson", import.meta.url), "utf8"));
 
 const [a, b] = process.argv.slice(2);
 const parse = (s: string) => { const [lng, lat] = s.split(",").map(Number); return { lng, lat }; };

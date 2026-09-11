@@ -52,10 +52,16 @@ export interface WaitingZoneProps {
   source_updated_at: string;
 }
 
-/** An intersection DieTurn has orthophoto coverage for (2556 in Taipei). */
+/** An intersection DieTurn has orthophoto coverage for (30,045 nationwide). */
 export interface SurveyedIntersectionProps {
   id: string;
   n_nodes: number;
+  /** which orthophoto set this intersection was surveyed on */
+  imagery: string;
+  /** measured recall of that imagery set (docs/PHASE0_Z20.md). Governs whether
+   *  "surveyed, no box found" is strong enough evidence to promise a direct
+   *  left turn — see MIN_RECALL_FOR_DIRECT in twoStageLeft.ts. */
+  survey_recall: number;
 }
 
 export interface CrosswalkProps {
@@ -74,8 +80,11 @@ export interface CrosswalkProps {
 
 /**
  * required — a 待轉格 serving this exact approach exists: two-stage left turn.
- * direct   — the intersection was surveyed and no box serves this approach.
- * unknown  — outside DieTurn coverage; we refuse to promise a direct left.
+ * direct   — surveyed on imagery we trust (survey_recall >= 0.75) and no box
+ *            serves this approach.
+ * unknown  — never imaged, OR imaged only on low-recall imagery whose silence
+ *            is not evidence of absence. Either way we refuse to promise a
+ *            direct left.
  */
 export type TwoStageStatus = "required" | "direct" | "unknown";
 

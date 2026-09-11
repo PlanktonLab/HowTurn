@@ -43,7 +43,7 @@ npm run dev:phone             # 區網 HTTPS，手機才拿得到 GPS / 語音 /
 
 ```bash
 # 在 repo 根目錄，重跑 DieTurn 產出後
-python3 geodata/export_app.py     # → public/geojson/taipei_waiting_zones.geojson + taipei_surveyed_intersections.geojson
+python3 geodata/export_app.py     # → public/geojson/taiwan_waiting_zones.geojson + taiwan_surveyed_intersections.geojson
 ```
 
 ## 部署到 GitHub Pages

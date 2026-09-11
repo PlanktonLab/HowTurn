@@ -10,8 +10,8 @@ import { readFileSync } from "node:fs";
 import { annotateLeftTurns, angleDiff360 } from "../src/lib/twoStageLeft";
 import type { DirectionsRoute, RouteStep } from "../src/lib/mapboxDirections";
 
-const zones = JSON.parse(readFileSync(new URL("../public/geojson/taipei_waiting_zones.geojson", import.meta.url), "utf8"));
-const surveyed = JSON.parse(readFileSync(new URL("../public/geojson/taipei_surveyed_intersections.geojson", import.meta.url), "utf8"));
+const zones = JSON.parse(readFileSync(new URL("../public/geojson/taiwan_waiting_zones.geojson", import.meta.url), "utf8"));
+const surveyed = JSON.parse(readFileSync(new URL("../public/geojson/taiwan_surveyed_intersections.geojson", import.meta.url), "utf8"));
 const centre = new Map<string, [number, number]>(surveyed.features.map((f: any) => [f.properties.id, f.geometry.coordinates]));
 
 function fakeRoute(node: [number, number], from: number, to: number): DirectionsRoute {

@@ -14,21 +14,37 @@ import type { LeftTurn, SurveyedIntersectionProps, TwoStageStatus, WaitingZonePr
  *   rule (道交規則 §99) sends them straight through to the box at the far
  *   RIGHT of the intersection, where they wait facing e. Hence a box serves
  *   this turn when its centre lies in the ahead-right quadrant of the
- *   maneuver node (offset between f and f+90°), within ~55 m — 99% of the
- *   detected boxes are within 44 m of the intersection centre. Detected boxes
+ *   maneuver node (offset between f and f+90°), within ~55 m. That radius is
+ *   sized to the z21 imagery, whose 72 m window cannot show a box further than
+ *   ~51 m out (measured max 54.2 m, P95 33.8 m). The z20 window is 104 m, so
+ *   1.9% of its boxes sit beyond 55 m and are not matched; those turns fall
+ *   through to the survey check and answer "unknown" rather than a wrong
+ *   "direct", so widening the radius is an accuracy win, not a safety fix —
+ *   and it would risk pulling in boxes belonging to the next junction.
+ *   Detected boxes
  *   are wider than deep (≈3.3 × 2.2 m, scooters park side by side), so the
  *   box axis is only used as a weak "aligned with the road grid" filter, never
  *   to infer the facing direction.
  *
- * With no matching box the answer depends on whether DieTurn ever looked at
- * that intersection: surveyed → "direct" (turn from the left lane), otherwise
- * "unknown" — we never promise a direct left for a junction we have not seen,
- * because that mistake costs a fine or worse, while an unnecessary wait only
- * costs a light cycle.
+ * With no matching box the answer depends on how well DieTurn saw that
+ * intersection. "Surveyed" alone is not enough: the promise of a direct left
+ * rests on the model's SILENCE, so it is only as trustworthy as the recall
+ * measured on that imagery set. Taipei's 都發局 z21 (6.8 cm/px) is the ground
+ * truth the model was tuned on; the rest of Taiwan is NLSC z20 (13.5 cm/px),
+ * where measured recall is 0.517 (docs/PHASE0_Z20.md) — a missing box there is
+ * as likely to be a miss as a genuine absence, so those junctions answer
+ * "unknown". We never promise a direct left we cannot back, because that
+ * mistake costs a fine or worse, while an unnecessary wait only costs a light
+ * cycle.
  */
 
 const MATCH_RADIUS_M = 55;
 const SURVEY_RADIUS_M = 40;
+/** "surveyed, no box" only means "turn directly" when the imagery it was
+ *  surveyed on recalls at least this share of real boxes. Matches the Phase 0
+ *  threshold in docs/PLAN_TAIWAN_SCAN.md §5 above which the v0.5 weights are
+ *  considered good enough to rely on. */
+const MIN_RECALL_FOR_DIRECT = 0.75;
 /** box axis must be within this of the approach or exit direction */
 const GRID_TOLERANCE_DEG = 35;
 const SERVES_TOLERANCE_DEG = 35;
@@ -66,7 +82,10 @@ export function annotateLeftTurns(route: DirectionsRoute, ctx: TwoStageContext):
     const zone = matchZone(step, ctx.zones.features);
     let status: TwoStageStatus;
     if (zone) status = "required";
-    else status = isSurveyed(step.location, ctx.surveyed.features) ? "direct" : "unknown";
+    else {
+      const recall = surveyRecallAt(step.location, ctx.surveyed.features);
+      status = recall !== null && recall >= MIN_RECALL_FOR_DIRECT ? "direct" : "unknown";
+    }
 
     let zoneEntryM: number | null = null;
     if (zone) {
@@ -125,19 +144,28 @@ function matchZone(step: RouteStep, zones: Zone[]): Zone | null {
   return best?.zone ?? null;
 }
 
-function isSurveyed(location: [number, number], surveyed: Surveyed[]): boolean {
+/**
+ * Recall of the best imagery this junction was surveyed on, or null if it was
+ * never imaged. Where two sets overlap the higher recall wins, so a junction
+ * covered by both z21 and z20 is judged on the z21 survey.
+ */
+function surveyRecallAt(location: [number, number], surveyed: Surveyed[]): number | null {
   const [lng0, lat0] = location;
   const mPerDegLon = 111_320 * Math.cos((lat0 * Math.PI) / 180);
   const degLat = SURVEY_RADIUS_M / M_PER_DEG_LAT;
   const degLon = SURVEY_RADIUS_M / mPerDegLon;
+  let best: number | null = null;
   for (const s of surveyed) {
     const [lng, lat] = s.geometry.coordinates;
     if (Math.abs(lat - lat0) > degLat || Math.abs(lng - lng0) > degLon) continue;
     const dx = (lng - lng0) * mPerDegLon;
     const dy = (lat - lat0) * M_PER_DEG_LAT;
-    if (Math.hypot(dx, dy) <= SURVEY_RADIUS_M) return true;
+    if (Math.hypot(dx, dy) > SURVEY_RADIUS_M) continue;
+    // older exports predate survey_recall; treat them as the z21 ground truth
+    const r = s.properties.survey_recall ?? 1;
+    if (best === null || r > best) best = r;
   }
-  return false;
+  return best;
 }
 
 /** difference between two axial (0–180 ambiguous) bearings */

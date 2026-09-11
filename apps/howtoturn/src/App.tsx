@@ -92,9 +92,11 @@ export default function App() {
   const [zones, setZones] = useState<ZoneCollection>(EMPTY_ZONES);
   const [surveyed, setSurveyed] = useState<SurveyedCollection>(EMPTY_SURVEYED);
 
-  // DieTurn output: 1,344 待轉格 polygons + the 2,556 intersections that were
+  // DieTurn output: 10,303 待轉格 polygons + the 30,045 intersections that were
   // photographed. Both are needed: the second one is what lets us say "no box
-  // here, you may turn directly" instead of just "we don't know".
+  // here, you may turn directly" instead of just "we don't know" — and it
+  // carries each intersection's survey_recall, which decides which of those
+  // two answers we are entitled to give (see twoStageLeft.ts).
   useEffect(() => {
     fetch(LAYER_SOURCES.waitingZone)
       .then((r) => (r.ok ? r.json() : EMPTY_ZONES))
