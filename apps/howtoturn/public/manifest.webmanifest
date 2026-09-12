@@ -1,11 +1,11 @@
 {
-  "name": "毋機道 HowToTurn",
-  "short_name": "毋機道",
-  "description": "台灣機車專屬導航：兩段式左轉提示、待轉格圖資、事故熱點",
+  "name": "HowTurn",
+  "short_name": "HowTurn",
+  "description": "台灣機車專屬導航：兩段式左轉提示、待轉格圖資",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "orientation": "portrait",
+  "orientation": "any",
   "background_color": "#f4f5f7",
   "theme_color": "#111214",
   "icons": [

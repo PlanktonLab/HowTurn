@@ -1,14 +1,8 @@
 import type { TravelMode } from "./types";
 
-// Mapbox Directions has no motorcycle profile, so 機車 routes on the driving
-// network — correct for Taiwan (機車 shares the roadway) but the two-stage
-// left turn is ours to add on top (see twoStageLeft.ts). driving-traffic gives
-// live-traffic ETAs and per-segment congestion for the route line.
-const PROFILE_MAP: Record<TravelMode, string> = {
-  motorcycle: "mapbox/driving-traffic",
-  car: "mapbox/driving-traffic",
-  walking: "mapbox/walking",
-};
+// Mapbox has no motorcycle profile. Avoid motorways and ferries explicitly;
+// other local motorcycle restrictions still require a dedicated routing source.
+const MOTORCYCLE_PROFILE = "mapbox/driving-traffic";
 
 export type Congestion = "unknown" | "low" | "moderate" | "heavy" | "severe";
 
@@ -69,6 +63,8 @@ export interface RouteRequestOptions {
   originBearing?: number;
   waypoints?: { lng: number; lat: number }[];
   alternatives?: boolean;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }
 
 export async function fetchRoutes(
@@ -78,9 +74,15 @@ export async function fetchRoutes(
   token: string,
   opts: RouteRequestOptions = {}
 ): Promise<DirectionsRoute[]> {
-  const profile = PROFILE_MAP[mode];
+  if (mode !== "motorcycle") throw new Error("目前僅支援機車路線");
+  if (!token.trim()) throw new Error("尚未設定地圖服務，無法規劃路線");
+  opts.signal?.throwIfAborted();
+  const profile = MOTORCYCLE_PROFILE;
   const waypoints = opts.waypoints ?? [];
   const all = [origin, ...waypoints, destination];
+  if (all.some((p) => !validCoordinate([p.lng, p.lat]))) {
+    throw new Error("起點或目的地的位置無效，請重新選擇");
+  }
   const coords = all.map((p) => `${p.lng},${p.lat}`).join(";");
 
   const params = new URLSearchParams({
@@ -94,24 +96,70 @@ export async function fetchRoutes(
     language: "zh-Hant",
     access_token: token,
   });
-  if (mode !== "walking") params.set("annotations", "congestion,maxspeed");
+  params.set("annotations", "congestion,maxspeed");
+  params.set("exclude", "motorway,ferry");
+  // Do not silently snap a misplaced destination several kilometres away.
+  params.set("radiuses", all.map(() => "100").join(";"));
   // detour waypoints are "pass near here", not "stop here": without this
   // Mapbox happily U-turns at the waypoint and drives back the same road
   if (waypoints.length) params.set("continue_straight", "true");
-  if (opts.originBearing != null) {
+  if (opts.originBearing != null && Number.isFinite(opts.originBearing)) {
     // one entry per coordinate; blanks mean "no constraint"
-    params.set("bearings", [`${Math.round(opts.originBearing)},45`, ...all.slice(1).map(() => "")].join(";"));
+    params.set("bearings", [`${Math.round((opts.originBearing % 360 + 360) % 360) % 360},45`, ...all.slice(1).map(() => "")].join(";"));
   }
 
-  const res = await fetch(`https://api.mapbox.com/directions/v5/${profile}/${coords}?${params}`);
-  if (!res.ok) {
-    throw new Error(`Mapbox Directions API error: ${res.status}`);
+  const controller = new AbortController();
+  const abort = () => controller.abort(opts.signal?.reason);
+  opts.signal?.addEventListener("abort", abort, { once: true });
+  const timeout = setTimeout(() => controller.abort(new DOMException("Request timed out", "TimeoutError")), opts.timeoutMs ?? 12_000);
+  try {
+    const res = await fetch(`https://api.mapbox.com/directions/v5/${profile}/${coords}?${params}`, { signal: controller.signal });
+    if (!res.ok) {
+      if (res.status === 401 || res.status === 403) throw new Error("地圖服務金鑰無效或未授權，請檢查設定");
+      if (res.status === 429) throw new Error("路線服務忙碌中，請稍後再試");
+      throw new Error("路線服務暫時無法使用，請稍後再試");
+    }
+    const data = await res.json();
+    opts.signal?.throwIfAborted();
+    if (data.code === "NoSegment") throw new Error("選擇的位置附近沒有可行駛道路，請改選附近路口");
+    if (data.code !== "Ok" || !Array.isArray(data.routes)) throw new Error("找不到可行駛路線，請調整起點或目的地");
+    const routes = data.routes.filter(validRoute).map(parseRoute) as DirectionsRoute[];
+    if (!routes.length) throw new Error("找不到有效的機車候選路線，請調整起點或目的地");
+    return routes;
+  } catch (error) {
+    opts.signal?.throwIfAborted();
+    if (controller.signal.aborted) throw new Error("路線搜尋逾時，請檢查網路後重試");
+    if (error instanceof TypeError) throw new Error("無法連線至路線服務，請檢查網路後重試");
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+    opts.signal?.removeEventListener("abort", abort);
   }
-  const data = await res.json();
-  if (!data.routes || data.routes.length === 0) {
-    throw new Error("No route found between these two points.");
-  }
-  return data.routes.map(parseRoute);
+}
+
+function validCoordinate(value: unknown): value is [number, number] {
+  return Array.isArray(value) && value.length >= 2 &&
+    Number.isFinite(value[0]) && Number.isFinite(value[1]) &&
+    Math.abs(value[0]) <= 180 && Math.abs(value[1]) <= 90;
+}
+
+function validLine(value: any): boolean {
+  return value?.type === "LineString" && Array.isArray(value.coordinates) &&
+    value.coordinates.length >= 2 && value.coordinates.every(validCoordinate);
+}
+
+function validRoute(route: any): boolean {
+  return Number.isFinite(route?.duration) && route.duration > 0 &&
+    Number.isFinite(route.distance) && route.distance > 0 && validLine(route.geometry) &&
+    Array.isArray(route.legs) && route.legs.length > 0 && route.legs.every((leg: any) =>
+      Array.isArray(leg.steps) && leg.steps.length > 0 && leg.steps.every((step: any) =>
+        validCoordinate(step?.maneuver?.location) && typeof step.maneuver.type === "string" &&
+        Number.isFinite(step.distance) && step.distance >= 0 && Number.isFinite(step.duration) && step.duration >= 0 &&
+        validLine(step.geometry) && !(step.intersections ?? []).some((intersection: any) =>
+          (intersection.classes ?? []).some((roadClass: string) => roadClass === "motorway" || roadClass === "ferry")
+        )
+      )
+    );
 }
 
 function parseRoute(r: any): DirectionsRoute {
@@ -125,7 +173,7 @@ function parseRoute(r: any): DirectionsRoute {
   );
   return {
     geometry: r.geometry as GeoJSON.LineString,
-    durationMin: Math.round(r.duration / 60),
+    durationMin: Math.max(1, Math.ceil(r.duration / 60)),
     durationS: r.duration,
     distanceKm: Math.round((r.distance / 1000) * 10) / 10,
     distanceM: r.distance,
@@ -150,7 +198,7 @@ function parseStep(s: any): RouteStep {
     durationS: s.duration,
     maneuverType: s.maneuver.type,
     modifier: s.maneuver.modifier,
-    instruction: s.maneuver.instruction,
+    instruction: s.maneuver.instruction ?? "",
     name: s.name ?? "",
     location: s.maneuver.location,
     bearingBefore: s.maneuver.bearing_before ?? 0,

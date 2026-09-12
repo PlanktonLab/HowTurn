@@ -8,10 +8,6 @@ export const TAIPEI_CENTER: [number, number] = [121.53, 25.04];
 const BASE = import.meta.env.BASE_URL;
 
 export const LAYER_SOURCES = {
-  intersection: `${BASE}geojson/taipei_intersection_hotspots.geojson`,
-  roadSegment: `${BASE}geojson/taipei_road_segment_hotspots.geojson`,
-  motorcycle: `${BASE}geojson/taipei_motorcycle_accident_hotspots.geojson`,
-  pedestrian: `${BASE}geojson/taipei_pedestrian_accident_hotspots.geojson`,
   crosswalk: `${BASE}geojson/taipei_crosswalks.geojson`,
   // DieTurn output (geodata/export_app.py): 10,303 待轉格 polygons over 30,045
   // imaged intersections nationwide, so the app can tell "surveyed, no box"
@@ -22,10 +18,3 @@ export const LAYER_SOURCES = {
   waitingZone: `${BASE}geojson/taiwan_waiting_zones.geojson`,
   surveyedIntersections: `${BASE}geojson/taiwan_surveyed_intersections.geojson`,
 } as const;
-
-export type LayerKey = keyof typeof LAYER_SOURCES | "complexIntersection" | "difficultRoad";
-
-// Layers HowToTurn does not yet have real data for. Kept visible-but-disabled
-// in the layer control so the UI is honest about current coverage instead of
-// silently omitting the feature (see DATA_SOURCES.md).
-export const NOT_YET_AVAILABLE: LayerKey[] = ["complexIntersection", "difficultRoad"];

@@ -26,8 +26,13 @@ import type { LeftTurn, SurveyedIntersectionProps, TwoStageStatus, WaitingZonePr
  *   box axis is only used as a weak "aligned with the road grid" filter, never
  *   to infer the facing direction.
  *
- * With no matching box the answer depends on how well DieTurn saw that
- * intersection. "Surveyed" alone is not enough: the promise of a direct left
+ * A box only becomes a mandatory wait when its inferred approach AND exit
+ * bearings match the route, its service direction is unambiguous, and the
+ * detector confidence is high. A weak or ambiguous match returns "unknown";
+ * a confirmed box serving another movement is ignored.
+ *
+ * With no matching or uncertain box the answer depends on how well DieTurn saw
+ * that intersection. "Surveyed" alone is not enough: the promise of a direct left
  * rests on the model's SILENCE, so it is only as trustworthy as the recall
  * measured on that imagery set. Taipei's 都發局 z21 (6.8 cm/px) is the ground
  * truth the model was tuned on; the rest of Taiwan is NLSC z20 (13.5 cm/px),
@@ -59,6 +64,13 @@ const M_PER_DEG_LAT = 110_574;
 type Zone = GeoJSON.Feature<GeoJSON.Polygon, WaitingZoneProps>;
 type Surveyed = GeoJSON.Feature<GeoJSON.Point, SurveyedIntersectionProps>;
 
+interface ZoneMatch {
+  /** Strong enough to affect route selection and issue a must-wait instruction. */
+  confirmed: Zone | null;
+  /** A box may serve this movement, but its detection or direction is uncertain. */
+  uncertain: boolean;
+}
+
 export interface TwoStageContext {
   zones: GeoJSON.FeatureCollection<GeoJSON.Polygon, WaitingZoneProps>;
   surveyed: GeoJSON.FeatureCollection<GeoJSON.Point, SurveyedIntersectionProps>;
@@ -79,9 +91,11 @@ export function annotateLeftTurns(route: DirectionsRoute, ctx: TwoStageContext):
     cursor += step.distanceM;
     if (!isLeftTurnStep(step)) return;
 
-    const zone = matchZone(step, ctx.zones.features);
+    const match = matchZone(step, ctx.zones.features);
+    const zone = match.confirmed;
     let status: TwoStageStatus;
     if (zone) status = "required";
+    else if (match.uncertain) status = "unknown";
     else {
       const recall = surveyRecallAt(step.location, ctx.surveyed.features);
       status = recall !== null && recall >= MIN_RECALL_FOR_DIRECT ? "direct" : "unknown";
@@ -107,7 +121,7 @@ export function annotateLeftTurns(route: DirectionsRoute, ctx: TwoStageContext):
   return out;
 }
 
-function matchZone(step: RouteStep, zones: Zone[]): Zone | null {
+function matchZone(step: RouteStep, zones: Zone[]): ZoneMatch {
   const [lng0, lat0] = step.location;
   const mPerDegLon = 111_320 * Math.cos((lat0 * Math.PI) / 180);
   const f = (step.bearingBefore * Math.PI) / 180;
@@ -116,6 +130,7 @@ function matchZone(step: RouteStep, zones: Zone[]): Zone | null {
   const degRadiusLon = MATCH_RADIUS_M / mPerDegLon;
 
   let best: { zone: Zone; score: number } | null = null;
+  let uncertain = false;
   for (const z of zones) {
     const p = z.properties;
     if (Math.abs(p.lat - lat0) > degRadiusLat || Math.abs(p.lon - lng0) > degRadiusLon) continue;
@@ -126,6 +141,14 @@ function matchZone(step: RouteStep, zones: Zone[]): Zone | null {
 
     const ahead = dx * fx + dy * fy;
     const right = dx * fy - dy * fx;
+    const fromDiff = angleDiff360(p.serves_from_bearing, step.bearingBefore);
+    const toDiff = angleDiff360(p.serves_to_bearing, step.bearingAfter);
+    // A routing node can be several metres off the surveyed centre, and
+    // inferred bearings are not exact. Preserve plausible borderline matches
+    // as unknown before applying the stricter mandatory-wait filters. They
+    // must never fall through to "direct" just because a threshold was missed.
+    const plausible = ahead >= -6 && right >= -8 && fromDiff <= 50 && toDiff <= 50;
+    if (plausible) uncertain = true;
     if (ahead < MIN_AHEAD_M || right < MIN_RIGHT_M) continue;
     // angle of the offset measured clockwise from the approach direction:
     // 0° = dead ahead, 90° = directly to the right; the box should sit between
@@ -135,13 +158,28 @@ function matchZone(step: RouteStep, zones: Zone[]): Zone | null {
     const gridDiff = Math.min(angleDiff180(p.heading_deg, step.bearingBefore), angleDiff180(p.heading_deg, step.bearingAfter));
     if (gridDiff > GRID_TOLERANCE_DEG) continue;
 
-    // lower is better: a box sitting squarely in the ahead-right quadrant and
-    // close to the node wins; agreement with the offline estimate is a bonus
-    let score = Math.abs(quadrantDeg - 45) / 45 + dist / MATCH_RADIUS_M;
-    if (angleDiff360(p.serves_from_bearing, step.bearingBefore) <= SERVES_TOLERANCE_DEG) score -= 0.4;
+    const fromMatches = fromDiff <= SERVES_TOLERANCE_DEG;
+    const toMatches = toDiff <= SERVES_TOLERANCE_DEG;
+
+    // A known box for another movement at the same junction must not affect
+    // this turn. Both the approach and exit direction have to match.
+    if (!fromMatches || !toMatches) continue;
+
+    // Low-confidence detections and ambiguous service directions can warn the
+    // rider, but they cannot force a detour or a "must wait" instruction.
+    if (p.serves_quality !== "good" || p.confidence !== "confirmed") {
+      uncertain = true;
+      continue;
+    }
+
+    // Lower is better: prefer a close box squarely ahead-right whose stored
+    // service bearings most closely match the actual route movement.
+    const directionDiff = angleDiff360(p.serves_from_bearing, step.bearingBefore) +
+      angleDiff360(p.serves_to_bearing, step.bearingAfter);
+    const score = Math.abs(quadrantDeg - 45) / 45 + dist / MATCH_RADIUS_M + directionDiff / 180;
     if (!best || score < best.score) best = { zone: z, score };
   }
-  return best?.zone ?? null;
+  return { confirmed: best?.zone ?? null, uncertain };
 }
 
 /**

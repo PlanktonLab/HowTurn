@@ -1,3 +1,5 @@
+import { Capacitor } from '@capacitor/core';
+import { Geolocation } from '@capacitor/geolocation';
 import along from "@turf/along";
 import turfBearing from "@turf/bearing";
 import destination from "@turf/destination";
@@ -20,39 +22,85 @@ export interface LocationProvider {
   stop(): void;
 }
 
-/** Real device GPS via the Geolocation API (needs HTTPS or localhost). */
+/** One API for the browser and the installed app, including native permissions. */
+async function ensureLocationPermission() {
+  if (!Capacitor.isNativePlatform()) return;
+  let permissions = await Geolocation.checkPermissions();
+  if (permissions.location !== 'granted' && permissions.coarseLocation !== 'granted') {
+    permissions = await Geolocation.requestPermissions({ permissions: ['location'] });
+  }
+  if (permissions.location !== 'granted' && permissions.coarseLocation !== 'granted') {
+    throw new Error('定位權限被拒絕，請在系統設定中允許 HowTurn 使用定位');
+  }
+}
+
+export function locationErrorMessage(error: unknown): string {
+  const err = error as { code?: string | number; message?: string };
+  if (err?.code === 1 || err?.code === 'OS-PLUG-GLOC-0003') {
+    return Capacitor.isNativePlatform()
+      ? '定位權限被拒絕，請在系統設定中允許 HowTurn 使用定位'
+      : '定位權限被拒絕，請在瀏覽器設定允許定位';
+  }
+  if (err?.code === 2 || err?.code === 'OS-PLUG-GLOC-0007' || err?.code === 'OS-PLUG-GLOC-0009') {
+    return '目前無法取得定位，請確認裝置定位服務已開啟';
+  }
+  if (err?.code === 3 || err?.code === 'OS-PLUG-GLOC-0010') return '定位逾時，請移至訊號較好的位置後重試';
+  return err?.message || '無法取得定位，請稍後重試';
+}
+
+export async function getCurrentFix(): Promise<Fix> {
+  try {
+    await ensureLocationPermission();
+    return toFix(await Geolocation.getCurrentPosition({ enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }));
+  } catch (error) {
+    throw new Error(locationErrorMessage(error));
+  }
+}
+
+function toFix(pos: { coords: { longitude: number; latitude: number; heading: number | null; speed: number | null; accuracy: number }; timestamp: number }): Fix {
+  const c = pos.coords;
+  return {
+    lng: c.longitude,
+    lat: c.latitude,
+    headingDeg: c.heading != null && Number.isFinite(c.heading) ? c.heading : null,
+    speedMps: c.speed != null && Number.isFinite(c.speed) ? c.speed : null,
+    accuracyM: c.accuracy ?? 50,
+    timestamp: pos.timestamp || Date.now(),
+  };
+}
+
+/** Uses the native GPS plugin in APKs and browser geolocation on the web. */
 export class GpsProvider implements LocationProvider {
-  readonly kind = "gps" as const;
-  private watchId: number | null = null;
+  readonly kind = 'gps' as const;
+  private watchId: string | null = null;
+  private generation = 0;
 
   start(onFix: (fix: Fix) => void, onError: (message: string) => void) {
-    if (!("geolocation" in navigator)) {
-      onError("此裝置不支援定位");
-      return;
-    }
-    this.watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        const c = pos.coords;
-        onFix({
-          lng: c.longitude,
-          lat: c.latitude,
-          headingDeg: c.heading != null && !Number.isNaN(c.heading) ? c.heading : null,
-          speedMps: c.speed != null && !Number.isNaN(c.speed) ? c.speed : null,
-          accuracyM: c.accuracy ?? 50,
-          timestamp: pos.timestamp || Date.now(),
-        });
-      },
-      (err) => {
-        if (err.code === err.PERMISSION_DENIED) onError("定位權限被拒絕，請在瀏覽器設定允許定位");
-        else if (err.code === err.POSITION_UNAVAILABLE) onError("目前無法取得 GPS 訊號");
-        else onError("定位逾時，請確認 GPS 已開啟");
-      },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
-    );
+    this.stop();
+    const generation = this.generation;
+    void (async () => {
+      try {
+        await ensureLocationPermission();
+        if (generation !== this.generation) return;
+        const id = await Geolocation.watchPosition(
+          { enableHighAccuracy: true, maximumAge: 0, timeout: 15000, minimumUpdateInterval: 1000 },
+          (pos, error) => {
+            if (generation !== this.generation) return;
+            if (error) onError(locationErrorMessage(error));
+            else if (pos) onFix(toFix(pos));
+          },
+        );
+        if (generation !== this.generation) await Geolocation.clearWatch({ id });
+        else this.watchId = id;
+      } catch (error) {
+        if (generation === this.generation) onError(locationErrorMessage(error));
+      }
+    })();
   }
 
   stop() {
-    if (this.watchId != null) navigator.geolocation.clearWatch(this.watchId);
+    this.generation += 1;
+    if (this.watchId != null) void Geolocation.clearWatch({ id: this.watchId }).catch(() => {});
     this.watchId = null;
   }
 }

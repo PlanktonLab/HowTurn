@@ -1,5 +1,5 @@
 {
-  "name": "howtoturn",
+  "name": "howturn",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -10,9 +10,18 @@
     "preview": "vite preview",
     "dev:phone": "HTTPS=1 vite --host",
     "check:route": "tsx scripts/check-route.ts",
-    "check:twostage": "tsx scripts/selftest-twostage.ts"
+    "check:twostage": "tsx scripts/selftest-twostage.ts",
+    "android:sync": "npm run build && cap sync android",
+    "android:open": "cap open android",
+    "android:apk": "node scripts/build-android.mjs",
+    "check:routing": "node --import tsx scripts/selftest-routing.ts",
+    "check:places": "node --import tsx scripts/selftest-geocode.ts"
   },
   "dependencies": {
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/core": "^8.5.2",
+    "@capacitor/geolocation": "^8.2.2",
     "@turf/along": "^7.4.0",
     "@turf/bearing": "^7.4.0",
     "@turf/boolean-intersects": "^7.4.0",
@@ -33,6 +42,7 @@
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.5.2",
     "@types/node": "^24.13.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",

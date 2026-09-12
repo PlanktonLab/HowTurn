@@ -6,7 +6,6 @@ import turfBearing from "@turf/bearing";
 import { feature, point } from "@turf/helpers";
 import { MAPBOX_TOKEN, TAIPEI_CENTER, LAYER_SOURCES } from "../lib/config";
 import type { Congestion } from "../lib/mapboxDirections";
-import type { HotspotProps } from "../lib/types";
 
 if (MAPBOX_TOKEN) {
   mapboxgl.accessToken = MAPBOX_TOKEN;
@@ -22,23 +21,15 @@ const STYLE_NAV_NIGHT = "mapbox://styles/mapbox/navigation-night-v1";
 const ROUTE_BLUE = "#0a7cff";
 const ROUTE_TRAVELLED = "#a9afb8";
 
-// Restrained palette: only genuinely high-risk locations get a strong colour,
-// everything else stays quiet so the map does not read as a wall of red dots.
-const RISK_COLOR: Expr = ["match", ["get", "risk_level"], "extreme", "#e5484d", "high", "#f0a020", "medium", "#9aa0a6", "#c3c7cb"];
-const RISK_OPACITY: Expr = ["match", ["get", "risk_level"], "extreme", 0.9, "high", 0.8, "medium", 0.55, 0.4];
-
 export interface ActiveLayers {
-  intersection: boolean;
-  roadSegment: boolean;
-  motorcycle: boolean;
-  pedestrian: boolean;
   crosswalk: boolean;
   waitingZone: boolean;
   traffic: boolean;
   buildings3d: boolean;
+  nightLighting: boolean;
 }
 
-export type RouteLabelKind = "wait" | "left" | "eta";
+export type RouteLabelKind = "wait" | "left" | "unknown" | "eta";
 export interface RouteLabel {
   lng: number;
   lat: number;
@@ -73,27 +64,47 @@ export interface MapViewHandle {
 
 interface Props {
   activeLayers: ActiveLayers;
-  onHotspotClick: (props: HotspotProps, layerKey: string) => void;
   onReady?: () => void;
-  /** true while turn-by-turn navigation is active: hides the general hotspot
-   *  clutter so only the route + relevant warnings are on screen */
-  suppressHotspots?: boolean;
   /** the user grabbed the map during navigation (camera stops following) */
   onFreeLook?: (free: boolean) => void;
 }
 
-const POINT_LAYERS: { key: "roadSegment" | "intersection" | "pedestrian" | "motorcycle"; source: string; url: string }[] = [
-  { key: "roadSegment", source: "src-road-segment", url: LAYER_SOURCES.roadSegment },
-  { key: "intersection", source: "src-intersection", url: LAYER_SOURCES.intersection },
-  { key: "pedestrian", source: "src-pedestrian", url: LAYER_SOURCES.pedestrian },
-  { key: "motorcycle", source: "src-motorcycle", url: LAYER_SOURCES.motorcycle },
-];
 
 const EMPTY_FC: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] };
 
 function isNight() {
   const h = new Date().getHours();
   return h < 6 || h >= 18;
+}
+
+/** Real map lighting: cool ambient light, warm facade spill and cast shadows. */
+function applyNightLighting(map: mapboxgl.Map) {
+  map.setLights([
+    { id: "night-ambient", type: "ambient", properties: { color: "#a9b9eb", intensity: 0.65 } },
+    { id: "night-moon", type: "directional", properties: {
+      color: "#ded5c5", intensity: 0.55, direction: [215, 65], "cast-shadows": true, "shadow-intensity": 0.65,
+    } },
+  ]);
+  map.setFog({ color: "#242d47", "high-color": "#101a32", "space-color": "#080f22", "horizon-blend": 0.06, "star-intensity": 0.15 });
+  for (const layer of map.getStyle()?.layers ?? []) {
+    if (layer.type === "symbol") {
+      map.setPaintProperty(layer.id, "text-emissive-strength", 1);
+      map.setPaintProperty(layer.id, "icon-emissive-strength", 1);
+    } else if (layer.type === "line") {
+      map.setPaintProperty(layer.id, "line-emissive-strength", layer.id.startsWith("route-") || layer.id.startsWith("maneuver-") ? 1 : 0.55);
+    } else if (layer.type === "fill" || layer.type === "circle") {
+      map.setPaintProperty(layer.id, `${layer.type}-emissive-strength`, 0.4);
+    }
+  }
+  if (map.getLayer("buildings-3d")) {
+    map.setPaintProperty("buildings-3d", "fill-extrusion-color", "#3f4154");
+    map.setPaintProperty("buildings-3d", "fill-extrusion-cast-shadows", true);
+    map.setPaintProperty("buildings-3d", "fill-extrusion-ambient-occlusion-intensity", 0.45);
+    map.setPaintProperty("buildings-3d", "fill-extrusion-flood-light-color", "#f2d3a2");
+    map.setPaintProperty("buildings-3d", "fill-extrusion-flood-light-intensity", 0.22);
+    map.setPaintProperty("buildings-3d", "fill-extrusion-flood-light-ground-radius", 14);
+    map.setPaintProperty("buildings-3d", "fill-extrusion-flood-light-wall-radius", 5);
+  }
 }
 
 /** px per metre at zoom z, latitude lat (Web Mercator) */
@@ -192,9 +203,65 @@ function makeZonePinImage(): ImageData {
 const WAIT_ORANGE = "#f97316";
 const LABEL_STYLE: Record<RouteLabelKind, { bg: string; color: string }> = {
   wait: { bg: WAIT_ORANGE, color: "#ffffff" },
-  left: { bg: "#30d158", color: "#05200f" },
+  left: { bg: "#34383e", color: "#20242a" },
   eta: { bg: "#111214", color: "#ffffff" },
+  unknown: { bg: "#fff3dc", color: "#755018" },
 };
+
+/** Compact direct-left callout; neutral styling keeps required waits distinct. */
+function makeLeftMarkerImage(night: boolean): ImageData {
+  const width = 84, height = 46, scale = 2;
+  const canvas = document.createElement("canvas");
+  canvas.width = width * scale;
+  canvas.height = height * scale;
+  const ctx = canvas.getContext("2d")!;
+  ctx.scale(scale, scale);
+
+  ctx.fillStyle = night ? "#252d3c" : "#ffffff";
+  ctx.strokeStyle = night ? "#526079" : "#dce0e5";
+  ctx.lineWidth = 1;
+  ctx.shadowColor = night ? "rgba(0,0,0,0.30)" : "rgba(25,35,48,0.16)";
+  ctx.shadowBlur = 4;
+  ctx.shadowOffsetY = 2;
+  ctx.beginPath();
+  ctx.moveTo(16, 3.5);
+  ctx.lineTo(68, 3.5);
+  ctx.quadraticCurveTo(79.5, 3.5, 79.5, 15);
+  ctx.lineTo(79.5, 23);
+  ctx.quadraticCurveTo(79.5, 34.5, 68, 34.5);
+  ctx.lineTo(47, 34.5);
+  ctx.lineTo(42, 40);
+  ctx.lineTo(37, 34.5);
+  ctx.lineTo(16, 34.5);
+  ctx.quadraticCurveTo(4.5, 34.5, 4.5, 23);
+  ctx.lineTo(4.5, 15);
+  ctx.quadraticCurveTo(4.5, 3.5, 16, 3.5);
+  ctx.closePath();
+  ctx.fill();
+  ctx.shadowColor = "transparent";
+  ctx.stroke();
+
+  const ink = night ? "#f1f4fa" : "#252a32";
+  ctx.strokeStyle = ink;
+  ctx.lineWidth = 2.25;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(29, 26);
+  ctx.lineTo(29, 20);
+  ctx.quadraticCurveTo(29, 14, 23, 14);
+  ctx.lineTo(15, 14);
+  ctx.moveTo(20, 9);
+  ctx.lineTo(15, 14);
+  ctx.lineTo(20, 19);
+  ctx.stroke();
+
+  ctx.fillStyle = ink;
+  ctx.font = '600 13px -apple-system, BlinkMacSystemFont, "Noto Sans TC", sans-serif';
+  ctx.textBaseline = "middle";
+  ctx.fillText("靠左", 38, 19.5);
+  return ctx.getImageData(0, 0, canvas.width, canvas.height);
+}
 
 /** icon-only 待轉 marker: orange rounded square, white two-stage-left glyph, tail */
 function makeWaitMarkerImage(): ImageData {
@@ -327,23 +394,20 @@ function buildGradient(coords: number[][], progress: number, lat: number): Expr 
 }
 
 const MapView = forwardRef<MapViewHandle, Props>(
-  ({ activeLayers, onHotspotClick, onReady, suppressHotspots, onFreeLook }, ref) => {
+  ({ activeLayers, onReady, onFreeLook }, ref) => {
     const containerRef = useRef<HTMLDivElement>(null);
     const mapRef = useRef<mapboxgl.Map | null>(null);
     const styleReady = useRef(false);
     const readyFired = useRef(false);
     const layersRef = useRef(activeLayers);
     layersRef.current = activeLayers;
-    const suppressRef = useRef(suppressHotspots);
-    suppressRef.current = suppressHotspots;
-    const onHotspotClickRef = useRef(onHotspotClick);
-    onHotspotClickRef.current = onHotspotClick;
     const onFreeLookRef = useRef(onFreeLook);
     onFreeLookRef.current = onFreeLook;
 
     // everything the style needs to be rebuilt from after a setStyle()
     const state = useRef({
       navigating: false,
+      nightStyle: false,
       following: true,
       routeMain: null as { geometry: GeoJSON.LineString; congestion: Congestion[] } | null,
       routeAlt: null as GeoJSON.LineString | null,
@@ -369,12 +433,13 @@ const MapView = forwardRef<MapViewHandle, Props>(
       if (!map.hasImage("puck")) map.addImage("puck", makePuckImage(), { pixelRatio: 2 });
       if (!map.hasImage("arrow-head")) map.addImage("arrow-head", makeArrowHeadImage(), { pixelRatio: 2 });
       if (!map.hasImage("zone-pin")) map.addImage("zone-pin", makeZonePinImage(), { pixelRatio: 2 });
-      for (const kind of ["left", "eta"] as RouteLabelKind[]) {
+      for (const kind of ["eta", "unknown"] as RouteLabelKind[]) {
         if (!map.hasImage(`label-${kind}`)) {
           const img = makeLabelImage(LABEL_STYLE[kind].bg);
           map.addImage(`label-${kind}`, img.data, img.opts);
         }
       }
+      if (!map.hasImage("marker-left")) map.addImage("marker-left", makeLeftMarkerImage(s.nightStyle), { pixelRatio: 2 });
       if (!map.hasImage("marker-wait")) map.addImage("marker-wait", makeWaitMarkerImage(), { pixelRatio: 2 });
 
       // insert below the first *label* layer so route/puck sit above roads but
@@ -395,10 +460,10 @@ const MapView = forwardRef<MapViewHandle, Props>(
             filter: ["==", ["get", "extrude"], "true"],
             minzoom: 14.5,
             paint: {
-              "fill-extrusion-color": s.navigating && isNight() ? "#2b303a" : "#dfe2e8",
+              "fill-extrusion-color": s.nightStyle ? "#343a50" : "#dfe2e8",
               "fill-extrusion-height": ["interpolate", ["linear"], ["zoom"], 14.5, 0, 16, ["get", "height"]],
               "fill-extrusion-base": ["interpolate", ["linear"], ["zoom"], 14.5, 0, 16, ["get", "min_height"]],
-              "fill-extrusion-opacity": 0.75,
+              "fill-extrusion-opacity": 1,
             },
           },
           firstSymbol
@@ -573,10 +638,48 @@ const MapView = forwardRef<MapViewHandle, Props>(
           },
         });
         map.addLayer({
+          id: "route-labels-left",
+          type: "symbol",
+          source: "route-labels",
+          minzoom: 12,
+          filter: ["==", ["get", "kind"], "left"],
+          layout: {
+            "icon-image": "marker-left",
+            "icon-anchor": "bottom",
+            "icon-offset": [0, 6],
+            "icon-padding": 8,
+            "icon-allow-overlap": false,
+            "icon-ignore-placement": false,
+            "symbol-sort-key": ["get", "sort"],
+          },
+        });
+        map.addLayer({
+          id: "route-labels-unknown",
+          type: "symbol",
+          source: "route-labels",
+          minzoom: 12,
+          filter: ["==", ["get", "kind"], "unknown"],
+          layout: {
+            "text-field": ["get", "text"],
+            "text-size": 12,
+            "text-font": ["DIN Pro Medium", "Arial Unicode MS Regular"],
+            "icon-image": "label-unknown",
+            "icon-text-fit": "both",
+            "icon-text-fit-padding": [5, 8, 9, 8],
+            "text-anchor": "bottom",
+            "icon-anchor": "bottom",
+            "text-offset": [0, -0.9],
+            "text-allow-overlap": false,
+            "icon-allow-overlap": false,
+            "symbol-sort-key": ["get", "sort"],
+          },
+          paint: { "text-color": ["get", "color"] },
+        });
+        map.addLayer({
           id: "route-labels",
           type: "symbol",
           source: "route-labels",
-          filter: ["!=", ["get", "kind"], "wait"],
+          filter: ["==", ["get", "kind"], "eta"],
           layout: {
             "text-field": ["get", "text"],
             "text-size": 13,
@@ -670,42 +773,6 @@ const MapView = forwardRef<MapViewHandle, Props>(
       (map.getSource("maneuver") as mapboxgl.GeoJSONSource).setData(data);
     };
 
-    const addPointLayer = (key: (typeof POINT_LAYERS)[number]["key"]) => {
-      const map = mapRef.current;
-      const entry = POINT_LAYERS.find((l) => l.key === key);
-      if (!map || !entry) return;
-      if (!map.getSource(entry.source)) map.addSource(entry.source, { type: "geojson", data: entry.url });
-      if (map.getLayer(`${entry.source}-circle`)) return;
-
-      const circlePaint: Expr = {
-        "circle-radius": [
-          "interpolate", ["linear"], ["zoom"],
-          12, ["interpolate", ["linear"], ["get", "accident_count"], 3, 2, 30, 5],
-          16, ["interpolate", ["linear"], ["get", "accident_count"], 3, 5, 30, 13],
-        ],
-        "circle-color": RISK_COLOR,
-        "circle-opacity": RISK_OPACITY,
-        "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 12, 0, 15, 1.2],
-        "circle-stroke-color": "#ffffff",
-      };
-      // Two layers per source: only genuinely dangerous locations show at
-      // city zoom (so the map doesn't read as a wall of red); the quieter
-      // ones appear once you zoom into a neighbourhood.
-      const variants: { id: string; minzoom: number; filter: Expr }[] = [
-        { id: `${entry.source}-circle`, minzoom: 12, filter: ["match", ["get", "risk_level"], ["extreme", "high"], true, false] },
-        { id: `${entry.source}-circle-minor`, minzoom: 14.5, filter: ["match", ["get", "risk_level"], ["extreme", "high"], false, true] },
-      ];
-      for (const v of variants) {
-        map.addLayer({ id: v.id, type: "circle", source: entry.source, minzoom: v.minzoom, filter: v.filter, paint: circlePaint });
-        map.on("click", v.id, (e) => {
-          const f = e.features?.[0];
-          if (f) onHotspotClickRef.current(f.properties as HotspotProps, key);
-        });
-        map.on("mouseenter", v.id, () => (map.getCanvas().style.cursor = "pointer"));
-        map.on("mouseleave", v.id, () => (map.getCanvas().style.cursor = ""));
-      }
-    };
-
     const addCrosswalkLayer = () => {
       const map = mapRef.current;
       if (!map || map.getLayer("src-crosswalk-circle")) return;
@@ -722,16 +789,9 @@ const MapView = forwardRef<MapViewHandle, Props>(
       const map = mapRef.current;
       if (!map || !styleReady.current) return;
       const wanted = layersRef.current;
-      const suppressed = !!suppressRef.current;
       const nav = state.current.navigating;
-      for (const { key, source } of POINT_LAYERS) {
-        const visible = wanted[key] && !suppressed;
-        if (visible) addPointLayer(key);
-        setVisible(`${source}-circle`, visible);
-        setVisible(`${source}-circle-minor`, visible);
-      }
-      if (wanted.crosswalk && !suppressed) addCrosswalkLayer();
-      setVisible("src-crosswalk-circle", wanted.crosswalk && !suppressed);
+      if (wanted.crosswalk && !nav) addCrosswalkLayer();
+      setVisible("src-crosswalk-circle", wanted.crosswalk && !nav);
       // waiting zones stay on during navigation (that's the whole point)
       for (const id of ["src-waiting-zone-fill", "src-waiting-zone-outline", "src-waiting-zone-pin", "src-waiting-zone-label"]) {
         setVisible(id, wanted.waitingZone || nav);
@@ -745,7 +805,7 @@ const MapView = forwardRef<MapViewHandle, Props>(
         const sl = (l as { "source-layer"?: string })["source-layer"];
         if (sl === "traffic" || /^traffic/.test(l.id)) setVisible(l.id, false);
       }
-      setVisible("buildings-3d", wanted.buildings3d || nav);
+      setVisible("buildings-3d", wanted.buildings3d || wanted.nightLighting || nav);
     };
 
     useImperativeHandle(ref, () => ({
@@ -780,7 +840,8 @@ const MapView = forwardRef<MapViewHandle, Props>(
         s.navigating = on;
         s.following = true;
         styleReady.current = false;
-        map.setStyle(on ? (isNight() ? STYLE_NAV_NIGHT : STYLE_NAV_DAY) : STYLE_PLANNING);
+        s.nightStyle = layersRef.current.nightLighting || (on && isNight());
+        map.setStyle(s.nightStyle ? STYLE_NAV_NIGHT : on ? STYLE_NAV_DAY : STYLE_PLANNING);
         if (!on) {
           s.puck = null;
           s.arrow = null;
@@ -885,6 +946,7 @@ const MapView = forwardRef<MapViewHandle, Props>(
       map.on("style.load", () => {
         styleReady.current = true;
         ensureAll();
+        if (state.current.nightStyle) applyNightLighting(map);
         if (!readyFired.current) {
           readyFired.current = true;
           onReady?.();
@@ -911,9 +973,18 @@ const MapView = forwardRef<MapViewHandle, Props>(
     }, []);
 
     useEffect(() => {
+      const map = mapRef.current;
+      const s = state.current;
+      const night = activeLayers.nightLighting || (s.navigating && isNight());
+      if (map && s.nightStyle !== night) {
+        s.nightStyle = night;
+        styleReady.current = false;
+        map.setStyle(night ? STYLE_NAV_NIGHT : s.navigating ? STYLE_NAV_DAY : STYLE_PLANNING);
+      }
+      if (map && !s.navigating) map.easeTo({ pitch: activeLayers.nightLighting || activeLayers.buildings3d ? 55 : 0, duration: 650 });
       syncLayers();
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeLayers, suppressHotspots]);
+    }, [activeLayers]);
 
     if (!MAPBOX_TOKEN) {
       return (

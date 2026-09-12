@@ -1,20 +1,13 @@
 import nearestPointOnLine from "@turf/nearest-point-on-line";
 import bearing from "@turf/bearing";
 import destinationPoint from "@turf/destination";
+import distance from "@turf/distance";
 import { feature, point } from "@turf/helpers";
 import type { TravelMode } from "./types";
 import { fetchRoutes, type DirectionsRoute } from "./mapboxDirections";
 
-// Mapbox Directions often returns a single route for short urban trips, so an
-// alternative that avoids something specific (a two-stage-left-turn
-// intersection, an accident hotspot) cannot rely on the API's own
-// alternatives. Instead we generate a real detour: push a waypoint sideways
-// off the route next to the thing we want to avoid and ask Mapbox to route
-// through it. The result is a genuine road-network route, which the caller
-// then re-analyzes — nothing about the comparison is hardcoded.
-const DETOUR_OFFSET_M = 350;
-const MAX_AVOID_POINTS = 3;
-
+/** At most two local candidates around one relevant turn. Never generate a
+ * detour just to fill a second card; the planner must verify a real benefit. */
 export async function generateDetourRoutes(
   origin: { lng: number; lat: number },
   destination: { lng: number; lat: number },
@@ -22,35 +15,35 @@ export async function generateDetourRoutes(
   avoidPoints: [number, number][],
   mode: TravelMode,
   token: string,
-  offsetM: number = DETOUR_OFFSET_M
+  offsetM = Math.min(250, Math.max(100, baseRoute.distanceM * 0.08)),
+  signal?: AbortSignal,
 ): Promise<DirectionsRoute[]> {
-  if (avoidPoints.length === 0) return [];
-
+  signal?.throwIfAborted();
+  if (baseRoute.distanceM < 600 || baseRoute.geometry.coordinates.length < 2) return [];
+  const avoid = avoidPoints.find((p) =>
+    distance(p, [origin.lng, origin.lat], { units: "meters" }) > 200 &&
+    distance(p, [destination.lng, destination.lat], { units: "meters" }) > 200
+  );
+  if (!avoid) return [];
   const line = feature(baseRoute.geometry);
+  const snapped = nearestPointOnLine(line, point(avoid));
   const coords = baseRoute.geometry.coordinates;
-  const requests: Promise<DirectionsRoute[]>[] = [];
-
-  for (const avoid of avoidPoints.slice(0, MAX_AVOID_POINTS)) {
-    const target = point(avoid);
-    // bearing of the route where it passes the avoided spot, so the detour
-    // waypoint is pushed perpendicular to the direction of travel
-    const snapped = nearestPointOnLine(line, target);
-    const idx = Math.max(1, (snapped.properties.index ?? 1) as number);
-    const a = point(coords[Math.max(0, idx - 1)]);
-    const b = point(coords[Math.min(coords.length - 1, idx + 1)]);
-    const routeBearing = bearing(a, b);
-
-    for (const side of [90, -90]) {
-      const waypoint = destinationPoint(target, offsetM / 1000, routeBearing + side, {
-        units: "kilometers",
+  const idx = Math.min(coords.length - 2, Math.max(0, snapped.properties.index ?? 0));
+  const routeBearing = bearing(point(coords[idx]), point(coords[idx + 1]));
+  const results = await Promise.all([90, -90].map(async (side) => {
+    const waypoint = destinationPoint(snapped, offsetM / 1000, routeBearing + side, { units: "kilometers" });
+    const [lng, lat] = waypoint.geometry.coordinates;
+    try {
+      return await fetchRoutes(origin, destination, mode, token, {
+        waypoints: [{ lng, lat }], alternatives: false, signal, timeoutMs: 5_000,
       });
-      const [wlng, wlat] = waypoint.geometry.coordinates;
-      requests.push(
-        fetchRoutes(origin, destination, mode, token, { waypoints: [{ lng: wlng, lat: wlat }], alternatives: false }).catch(() => [])
-      );
+    } catch {
+      // Missing side roads or an optional candidate timing out must not discard
+      // the usable primary route. User cancellation must still propagate.
+      signal?.throwIfAborted();
+      return [];
     }
-  }
-
-  const settled = await Promise.all(requests);
-  return settled.flat();
+  }));
+  signal?.throwIfAborted();
+  return results.flat();
 }

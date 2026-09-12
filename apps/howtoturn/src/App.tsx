@@ -3,39 +3,33 @@ import { Layers, Navigation2, Play, LocateFixed } from "lucide-react";
 import MapView, { type ActiveLayers, type MapViewHandle, type RouteLabel } from "./components/MapView";
 import along from "@turf/along";
 import { feature } from "@turf/helpers";
-import SearchBar from "./components/SearchBar";
-import SearchSheet, { type Endpoint } from "./components/SearchSheet";
+import SearchBar, { type Endpoint } from "./components/SearchBar";
 import Sheet from "./components/Sheet";
 import RouteSheet from "./components/RouteSheet";
-import HotspotSheet from "./components/HotspotSheet";
 import LayersSheet from "./components/LayersSheet";
 import Navigation, { type RerouteResult } from "./components/Navigation";
-import { fetchRoutes, type DirectionsRoute } from "./lib/mapboxDirections";
-import { generateDetourRoutes } from "./lib/alternativeRoute";
+import { fetchRoutes } from "./lib/mapboxDirections";
+import type { TwoStageContext } from "./lib/twoStageLeft";
+import { buildRouteOption, planMotorcycleRoutes, type RoutePlan } from "./lib/routePlanner";
+import { onAndroidBack } from "./lib/native";
 import { getCurrentPosition } from "./lib/geocode";
-import { analyzeRoute } from "./lib/routeAnalysis";
-import { annotateLeftTurns, type TwoStageContext } from "./lib/twoStageLeft";
 import { GpsProvider, SimulatedProvider, type LocationProvider } from "./lib/location";
 import { voice } from "./lib/voice";
 import { DEMO_ORIGIN, DEMO_DESTINATION } from "./lib/demoData";
 import { FIXTURE_ENABLED, buildFixtureRoute } from "./lib/devFixture";
 import { MAPBOX_TOKEN, LAYER_SOURCES } from "./lib/config";
 import type {
-  HotspotProps, RouteOption, RouteOptionId, SurveyedIntersectionProps, TravelMode, WaitingZoneProps,
+  RouteOption, RouteOptionId, SurveyedIntersectionProps, TravelMode, WaitingZoneProps,
 } from "./lib/types";
 import "./app.css";
 
-type SheetView = "none" | "search" | "route" | "hotspot" | "layers";
+type SheetView = "none" | "route" | "layers";
 type ZoneCollection = GeoJSON.FeatureCollection<GeoJSON.Polygon, WaitingZoneProps>;
 type SurveyedCollection = GeoJSON.FeatureCollection<GeoJSON.Point, SurveyedIntersectionProps>;
-type HotspotCollection = GeoJSON.FeatureCollection<GeoJSON.Point, HotspotProps>;
-type Built = { option: RouteOption; hits: GeoJSON.Feature<GeoJSON.Point, HotspotProps>[] };
 
 const EMPTY_ZONES: ZoneCollection = { type: "FeatureCollection", features: [] };
 const EMPTY_SURVEYED: SurveyedCollection = { type: "FeatureCollection", features: [] };
 
-const requiredCount = (o: RouteOption) => o.leftTurns.filter((l) => l.status === "required").length;
-const hasUturn = (o: RouteOption) => o.steps.some((s) => s.modifier === "uturn");
 
 /** Google-Maps-style callouts: 待轉區 at each box the route uses, 靠左 where
  *  a direct left is allowed, and the ETA at the route's midpoint while planning */
@@ -46,6 +40,8 @@ function labelsFor(route: RouteOption, withEta: boolean): RouteLabel[] {
       out.push({ lng: lt.zone.properties.lon, lat: lt.zone.properties.lat, text: "待轉區", kind: "wait" });
     } else if (lt.status === "direct") {
       out.push({ lng: lt.location[0], lat: lt.location[1], text: "靠左", kind: "left" });
+    } else if (lt.status === "unknown") {
+      out.push({ lng: lt.location[0], lat: lt.location[1], text: "待轉待確認", kind: "unknown" });
     }
   }
   if (withEta) {
@@ -58,24 +54,25 @@ function labelsFor(route: RouteOption, withEta: boolean): RouteLabel[] {
 
 export default function App() {
   const mapRef = useRef<MapViewHandle>(null);
-  const hotspotCache = useRef<HotspotCollection[] | null>(null);
+  const planningRequest = useRef<AbortController | null>(null);
+  const rerouteRequest = useRef<AbortController | null>(null);
+  const navigationActive = useRef(false);
+  const locationRequest = useRef(0);
+  const selectedRouteRef = useRef<RouteOptionId>("fastest");
+  const contextRequest = useRef<Promise<TwoStageContext> | null>(null);
   // blue dot while planning (navigation runs its own provider)
   const planningWatch = useRef<GpsProvider | null>(null);
 
   const [layers, setLayers] = useState<ActiveLayers>({
-    motorcycle: false,
-    pedestrian: false,
-    intersection: false,
-    roadSegment: false,
     crosswalk: false,
     waitingZone: true,
     traffic: false,
     buildings3d: false,
+    nightLighting: false,
   });
 
-  const [mode, setMode] = useState<TravelMode>("motorcycle");
+  const mode: TravelMode = "motorcycle";
   const [sheet, setSheet] = useState<SheetView>("none");
-  const [selectedHotspot, setSelectedHotspot] = useState<{ props: HotspotProps; layerKey: string } | null>(null);
 
   const [origin, setOrigin] = useState<Endpoint | null>(null);
   const [destination, setDestination] = useState<Endpoint | null>(null);
@@ -83,10 +80,7 @@ export default function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [routes, setRoutes] = useState<{ fastest: RouteOption; avoidWaiting: RouteOption | null } | null>(null);
   const [selectedRoute, setSelectedRoute] = useState<RouteOptionId>("fastest");
-  const [routeHits, setRouteHits] = useState<Record<RouteOptionId, GeoJSON.Feature<GeoJSON.Point, HotspotProps>[]>>({
-    fastest: [], avoidWaiting: [], alternative: [],
-  });
-  const [navigation, setNavigation] = useState<{ provider: LocationProvider; route: RouteOption; hits: Built["hits"] } | null>(null);
+  const [navigation, setNavigation] = useState<{ provider: LocationProvider; route: RouteOption } | null>(null);
   const [freeLook, setFreeLook] = useState(false);
   const [mapReady, setMapReady] = useState(false);
   const [zones, setZones] = useState<ZoneCollection>(EMPTY_ZONES);
@@ -98,47 +92,32 @@ export default function App() {
   // carries each intersection's survey_recall, which decides which of those
   // two answers we are entitled to give (see twoStageLeft.ts).
   useEffect(() => {
-    fetch(LAYER_SOURCES.waitingZone)
-      .then((r) => (r.ok ? r.json() : EMPTY_ZONES))
-      .then((d: ZoneCollection) => setZones(d?.features ? d : EMPTY_ZONES))
-      .catch(() => setZones(EMPTY_ZONES));
-    fetch(LAYER_SOURCES.surveyedIntersections)
-      .then((r) => (r.ok ? r.json() : EMPTY_SURVEYED))
-      .then((d: SurveyedCollection) => setSurveyed(d?.features ? d : EMPTY_SURVEYED))
-      .catch(() => setSurveyed(EMPTY_SURVEYED));
+    const controller = new AbortController();
+    const read = async (url: string) => {
+      const response = await fetch(url, { signal: controller.signal });
+      if (!response.ok) throw new Error("Waiting zone data unavailable");
+      const data = await response.json();
+      if (data?.type !== "FeatureCollection" || !Array.isArray(data.features)) throw new Error("Invalid waiting zone data");
+      return data;
+    };
+    contextRequest.current = Promise.all([read(LAYER_SOURCES.waitingZone), read(LAYER_SOURCES.surveyedIntersections)])
+      .then(([loadedZones, loadedSurveyed]) => {
+        if (!controller.signal.aborted) {
+          setZones(loadedZones);
+          setSurveyed(loadedSurveyed);
+        }
+        return { zones: loadedZones, surveyed: loadedSurveyed };
+      }).catch(() => {
+        // A survey without its matching boxes cannot prove a direct left.
+        if (!controller.signal.aborted) { setZones(EMPTY_ZONES); setSurveyed(EMPTY_SURVEYED); }
+        return { zones: EMPTY_ZONES, surveyed: EMPTY_SURVEYED };
+      });
+    return () => controller.abort();
   }, []);
 
   function showToast(msg: string) {
     setToast(msg);
     setTimeout(() => setToast(null), 3200);
-  }
-
-  async function loadHotspotCollections(): Promise<HotspotCollection[]> {
-    if (hotspotCache.current) return hotspotCache.current;
-    const urls = [LAYER_SOURCES.intersection, LAYER_SOURCES.roadSegment, LAYER_SOURCES.motorcycle, LAYER_SOURCES.pedestrian];
-    const results = (await Promise.all(urls.map((u) => fetch(u).then((r) => r.json())))) as HotspotCollection[];
-    hotspotCache.current = results;
-    return results;
-  }
-
-  function buildOption(r: DirectionsRoute, id: RouteOptionId, label: string, collections: HotspotCollection[], ctx: TwoStageContext): Built {
-    const { stats, hitFeatures } = analyzeRoute(r.geometry, collections);
-    const leftTurns = annotateLeftTurns(r, ctx);
-    return {
-      option: {
-        id, label,
-        durationMin: r.durationMin,
-        distanceKm: r.distanceKm,
-        geometry: r.geometry,
-        steps: r.steps,
-        stats,
-        congestion: r.congestion,
-        maxspeedKph: r.maxspeedKph,
-        leftTurns,
-        waitingZones: leftTurns.flatMap((l) => (l.zone ? [l.zone] : [])),
-      },
-      hits: hitFeatures,
-    };
   }
 
   function startPlanningWatch() {
@@ -157,99 +136,85 @@ export default function App() {
   }
 
   async function locateRider(opts: { quiet?: boolean } = {}): Promise<Endpoint | null> {
+    const requestId = ++locationRequest.current;
     try {
       const pos = await getCurrentPosition();
-      const here: Endpoint = { label: "目前位置", ...pos, isCurrentLocation: true };
-      setOrigin(here);
+      if (requestId !== locationRequest.current || navigationActive.current) return null;
+      const here: Endpoint = { label: "現在的位置", ...pos, isCurrentLocation: true };
       mapRef.current?.updatePuck(pos.lng, pos.lat, 0, 30);
       mapRef.current?.flyTo(pos.lng, pos.lat, 16);
       startPlanningWatch();
       return here;
-    } catch {
-      if (!opts.quiet) showToast("無法取得目前位置，請改用搜尋設定起點");
+    } catch (error) {
+      if (requestId !== locationRequest.current) return null;
+      if (!opts.quiet) showToast(error instanceof Error ? error.message : "無法取得目前位置，請改用搜尋設定起點");
       return null;
     }
   }
 
-  // the origin defaults to where the rider is, like any navigation app;
-  // if location is refused the origin simply stays empty and can be searched
-  useEffect(() => {
-    if (!mapReady) return;
-    locateRider({ quiet: true });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mapReady]);
+  function cancelPlanning() {
+    planningRequest.current?.abort();
+    planningRequest.current = null;
+    setLoading(false);
+  }
 
-  async function planRoute(from: Endpoint, to: Endpoint, travelMode: TravelMode) {
-    if (!MAPBOX_TOKEN) return;
+  function editEndpoint(field: "origin" | "destination", endpoint: Endpoint | null) {
+    cancelPlanning();
+    setSheet("none");
+    setRoutes(null);
+    mapRef.current?.setRoutes(null, null, null);
+    mapRef.current?.setRouteLabels([]);
+    mapRef.current?.highlightWaitingZones([]);
+    (field === "origin" ? setOrigin : setDestination)(endpoint);
+    if (endpoint) mapRef.current?.flyTo(endpoint.lng, endpoint.lat, 16.5);
+    if (field === "origin" && !endpoint?.isCurrentLocation) stopPlanningWatch();
+  }
+
+  function closeSheet() {
+    locationRequest.current++;
+    if (sheet === "route") {
+      editEndpoint("destination", null);
+      return;
+    }
+    cancelPlanning();
+    setSheet("none");
+  }
+
+  async function planRoute(from: Endpoint, to: Endpoint) {
+    cancelPlanning();
+    if (!MAPBOX_TOKEN) {
+      showToast("尚未設定地圖服務，暫時無法規劃路線");
+      return;
+    }
+    const controller = new AbortController();
+    planningRequest.current = controller;
     setLoading(true);
+    selectedRouteRef.current = "fastest";
+    setSelectedRoute("fastest");
     setNavigation(null);
-    setMode(travelMode);
-    try {
-      const collections = FIXTURE_ENABLED ? [] : await loadHotspotCollections();
-      const ctx: TwoStageContext = { zones, surveyed };
-      const fixture = FIXTURE_ENABLED ? buildFixtureRoute(zones, surveyed) : null;
-      const candidates = fixture ? [fixture] : await fetchRoutes(from, to, travelMode, MAPBOX_TOKEN);
-
-      const analyzed = candidates.map((r) => build(r, "fastest", "最快路線"));
-      analyzed.sort((a, b) => a.option.durationMin - b.option.durationMin);
-      const fastest = analyzed[0];
-
-      // Second option. With two-stage lefts on the fastest route it is
-      // "避開待轉": Mapbox's own alternatives plus detours pushed around each
-      // required box, keeping whichever needs the fewest. Otherwise it is a
-      // plain "替代路線" so the rider always has a choice, like Google Maps.
-      let avoid: Built | null = null;
-      const others = analyzed.slice(1);
-      if (travelMode === "motorcycle" && !fixture && requiredCount(fastest.option) > 0) {
-        const detours = await generateDetourRoutes(
-          from, to, candidates[0],
-          fastest.option.waitingZones.map((z) => [z.properties.lon, z.properties.lat] as [number, number]),
-          travelMode, MAPBOX_TOKEN
-        );
-        // a U-turn is not a way to avoid a left turn; drop candidates that
-        // "avoid" the box by looping back (unless the fastest route U-turns too)
-        const pool = [...others, ...detours.map((r) => build(r, "avoidWaiting", "避開待轉"))]
-          .filter((d) => !hasUturn(d.option) || hasUturn(fastest.option));
-        const better = pool
-          .filter((d) => requiredCount(d.option) < requiredCount(fastest.option))
-          .sort((a, b) => requiredCount(a.option) - requiredCount(b.option) || a.option.durationMin - b.option.durationMin)[0];
-        if (better) avoid = { ...better, option: { ...better.option, id: "avoidWaiting", label: "避開待轉" } };
-      }
-      if (!avoid && !fixture) {
-        let alt: Built | undefined = others[0];
-        if (!alt) {
-          // Mapbox often returns a single route for short urban trips: push a
-          // waypoint sideways at the midpoint to get a genuinely different one
-          const mid = along(feature(fastest.option.geometry), fastest.option.distanceKm / 2, { units: "kilometers" });
-          // push proportionally to trip length: 350 m sideways on a 1 km trip
-          // only yields absurd loops
-          const offsetM = Math.min(350, Math.max(100, fastest.option.distanceKm * 1000 * 0.2));
-          const detours = await generateDetourRoutes(from, to, candidates[0], [mid.geometry.coordinates as [number, number]], travelMode, MAPBOX_TOKEN, offsetM);
-          const base = new Set(fastest.option.geometry.coordinates.map((c) => c.join(",")));
-          const overlap = (g: GeoJSON.LineString) => g.coordinates.filter((c) => base.has(c.join(","))).length / g.coordinates.length;
-          alt = detours
-            .map((r) => build(r, "alternative", "替代路線"))
-            .filter((d) => (!hasUturn(d.option) || hasUturn(fastest.option)) && d.option.durationMin <= fastest.option.durationMin * 1.6 + 3 && overlap(d.option.geometry) < 0.85)
-            .sort((a, b) => a.option.durationMin - b.option.durationMin)[0];
-        }
-        if (alt) avoid = { ...alt, option: { ...alt.option, id: "alternative", label: "替代路線" } };
-      }
-
-      setRoutes({ fastest: fastest.option, avoidWaiting: avoid?.option ?? null });
-      setRouteHits({ fastest: fastest.hits, avoidWaiting: avoid?.hits ?? [], alternative: avoid?.hits ?? [] });
-      // the normal route is the default; 避開待轉 is offered, not imposed
-      setSelectedRoute("fastest");
+    const publish = (plan: RoutePlan) => {
+      if (controller.signal.aborted) return;
+      setRoutes(plan);
       setSheet("route");
-      showRoutes(fastest.option, avoid?.option ?? null, "fastest");
-
-      function build(r: DirectionsRoute, id: RouteOptionId, label: string) {
-        return buildOption(r, id, label, collections, ctx);
-      }
+      showRoutes(plan.fastest, plan.avoidWaiting, selectedRouteRef.current);
+    };
+    try {
+      const ctx = await contextRequest.current ?? { zones: EMPTY_ZONES, surveyed: EMPTY_SURVEYED };
+      controller.signal.throwIfAborted();
+      const fixture = FIXTURE_ENABLED ? buildFixtureRoute(ctx.zones, ctx.surveyed) : null;
+      const plan = await planMotorcycleRoutes(from, to, MAPBOX_TOKEN, ctx, {
+        signal: controller.signal,
+        onPrimaryRoute: publish,
+        initialRoutes: fixture ? [fixture] : undefined,
+      });
+      publish(plan);
     } catch (e) {
-      console.error(e);
-      showToast("目前無法取得路線，請稍後再試");
+      if (!controller.signal.aborted) showToast(e instanceof Error ? e.message : "目前無法取得路線，請稍後再試");
     } finally {
-      setLoading(false);
+      if (planningRequest.current === controller) {
+        planningRequest.current = null;
+        setLoading(false);
+      }
     }
   }
 
@@ -267,6 +232,7 @@ export default function App() {
 
   function selectRoute(id: RouteOptionId) {
     if (!routes) return;
+    selectedRouteRef.current = id;
     setSelectedRoute(id);
     showRoutes(routes.fastest, routes.avoidWaiting, id);
   }
@@ -274,11 +240,15 @@ export default function App() {
   const activeRoute =
     routes ? (selectedRoute !== "fastest" && routes.avoidWaiting ? routes.avoidWaiting : routes.fastest) : null;
 
-  function startNavigation(kind: "gps" | "sim") {
+  function startNavigation(kind: "gps" | "sim", chosenRoute = activeRoute) {
+    const activeRoute = chosenRoute;
     if (!activeRoute) return;
+    cancelPlanning();
     // must happen inside the tap handler: mobile browsers only let speech
     // (and the first geolocation prompt) start from a user gesture
     voice.unlock();
+    navigationActive.current = true;
+    locationRequest.current++;
     let provider: LocationProvider;
     if (kind === "gps") provider = new GpsProvider();
     else {
@@ -289,12 +259,15 @@ export default function App() {
     stopPlanningWatch();
     setSheet("none");
     setFreeLook(false);
-    setNavigation({ provider, route: activeRoute, hits: routeHits[selectedRoute] });
+    setNavigation({ provider, route: activeRoute });
     mapRef.current?.setRouteLabels(labelsFor(activeRoute, false));
     mapRef.current?.setNavigation(true);
   }
 
   function endNavigation() {
+    navigationActive.current = false;
+    rerouteRequest.current?.abort();
+    voice.stop();
     setNavigation(null);
     setFreeLook(false);
     mapRef.current?.setNavigation(false);
@@ -308,35 +281,48 @@ export default function App() {
   }
 
   async function handleReroute(from: { lng: number; lat: number }, bearing: number): Promise<RerouteResult | null> {
-    if (!MAPBOX_TOKEN || !destination) return null;
+    if (!MAPBOX_TOKEN || !destination || !navigationActive.current) return null;
+    rerouteRequest.current?.abort();
+    const controller = new AbortController();
+    rerouteRequest.current = controller;
     try {
-      const collections = await loadHotspotCollections();
-      const [r] = await fetchRoutes(from, destination, mode, MAPBOX_TOKEN, { originBearing: bearing, alternatives: false });
-      return buildOption(r, "fastest", "最快路線", collections, { zones, surveyed });
+      const [r] = await fetchRoutes(from, destination, mode, MAPBOX_TOKEN, { originBearing: bearing, alternatives: false, signal: controller.signal });
+      if (controller.signal.aborted || !navigationActive.current) return null;
+      return { option: buildRouteOption(r, { zones, surveyed }) };
     } catch {
       return null;
     }
   }
 
   function handleRouteReplaced(r: RerouteResult) {
+    if (!navigationActive.current) return;
+    selectedRouteRef.current = "fastest";
     setRoutes({ fastest: r.option, avoidWaiting: null });
-    setRouteHits({ fastest: r.hits, avoidWaiting: [], alternative: [] });
     setSelectedRoute("fastest");
-    setNavigation((n) => (n ? { ...n, route: r.option, hits: r.hits } : n));
+    setNavigation((n) => (n ? { ...n, route: r.option } : n));
     mapRef.current?.setRoutes({ geometry: r.option.geometry, congestion: r.option.congestion }, null, "fastest");
     mapRef.current?.setRouteLabels(labelsFor(r.option, false));
   }
 
   async function runDemo() {
-    // start from the rider's real position when we have it; the fixed
-    // landmark is only the fallback for machines without location
-    const here = origin?.isCurrentLocation ? origin : await locateRider({ quiet: true });
-    const from: Endpoint = here ?? { label: DEMO_ORIGIN.name, lng: DEMO_ORIGIN.lng, lat: DEMO_ORIGIN.lat };
+    const from: Endpoint = { label: DEMO_ORIGIN.name, lng: DEMO_ORIGIN.lng, lat: DEMO_ORIGIN.lat };
     const to: Endpoint = { label: DEMO_DESTINATION.name, lng: DEMO_DESTINATION.lng, lat: DEMO_DESTINATION.lat };
     setOrigin(from);
     setDestination(to);
-    planRoute(from, to, "motorcycle");
+    void planRoute(from, to);
   }
+
+  useEffect(() => () => {
+    planningRequest.current?.abort();
+    rerouteRequest.current?.abort();
+    planningWatch.current?.stop();
+  }, []);
+
+  useEffect(() => onAndroidBack(() => {
+    if (sheet !== "none") { closeSheet(); return true; }
+    if (navigation) { endNavigation(); return true; }
+    return false;
+  }));
 
   const navigating = navigation != null;
 
@@ -345,14 +331,8 @@ export default function App() {
       <MapView
         ref={mapRef}
         activeLayers={layers}
-        suppressHotspots={navigating}
         onReady={() => setMapReady(true)}
         onFreeLook={setFreeLook}
-        onHotspotClick={(props, layerKey) => {
-          if (navigating) return;
-          setSelectedHotspot({ props, layerKey });
-          setSheet("hotspot");
-        }}
       />
 
       {!navigating && (
@@ -360,51 +340,43 @@ export default function App() {
           <div className="topbar-row">
             <div className="brand">
               <Navigation2 size={16} strokeWidth={2.4} />
-              毋機道
+              HowTurn
             </div>
             <div className="topbar-actions">
               <button
                 className={`icon-button ${sheet === "layers" ? "icon-button-active" : ""}`}
-                onClick={() => setSheet(sheet === "layers" ? "none" : "layers")}
+                onClick={() => { cancelPlanning(); setSheet(sheet === "layers" ? "none" : "layers"); }}
                 aria-label="道路資訊"
               >
                 <Layers size={19} strokeWidth={2} />
               </button>
-              {!routes && (
+              {FIXTURE_ENABLED && !routes && (
                 <button className="icon-button" disabled={(!mapReady && !FIXTURE_ENABLED) || loading} onClick={runDemo} aria-label="試用導航">
                   <Play size={18} strokeWidth={2.2} />
                 </button>
               )}
             </div>
           </div>
-          <SearchBar onOpen={() => setSheet("search")} destinationLabel={destination?.label} />
+          <SearchBar
+            origin={origin}
+            destination={destination}
+            onOriginChange={(endpoint) => editEndpoint("origin", endpoint)}
+            onDestinationChange={(endpoint) => editEndpoint("destination", endpoint)}
+            onUseCurrentLocation={() => locateRider()}
+            onPlan={(from, to) => void planRoute(from, to)}
+            planning={loading}
+          />
         </div>
       )}
 
-      {!navigating && sheet === "none" && (
+      {!navigating && sheet === "none" && !(origin && !origin.isCurrentLocation && !destination) && (
         <button className="locate-button" aria-label="回到目前位置" onClick={() => locateRider()}>
           <LocateFixed size={20} strokeWidth={2} />
         </button>
       )}
 
-      {sheet === "search" && (
-        <Sheet title="規劃路線" onClose={() => setSheet("none")}>
-          <SearchSheet
-            mode={mode}
-            onModeChange={setMode}
-            origin={origin}
-            destination={destination}
-            onOriginChange={setOrigin}
-            onDestinationChange={setDestination}
-            onUseCurrentLocation={() => locateRider()}
-            onSearch={() => origin && destination && planRoute(origin, destination, mode)}
-            loading={loading}
-          />
-        </Sheet>
-      )}
-
       {sheet === "route" && routes && (
-        <Sheet onClose={() => setSheet("none")}>
+        <Sheet onClose={closeSheet} variant="route">
           <RouteSheet
             destinationName={destination?.label ?? "目的地"}
             fastest={routes.fastest}
@@ -412,23 +384,16 @@ export default function App() {
             selected={selectedRoute}
             onSelect={selectRoute}
             onStart={() => startNavigation("gps")}
-            onSimulate={() => startNavigation("sim")}
-            mode={mode}
-            onModeChange={(m) => {
-              if (origin && destination) planRoute(origin, destination, m);
-            }}
+            onSimulate={FIXTURE_ENABLED ? () => startNavigation("sim") : undefined}
+            onClose={closeSheet}
+            findingAlternative={loading}
           />
         </Sheet>
       )}
 
-      {sheet === "hotspot" && selectedHotspot && (
-        <Sheet onClose={() => setSheet("none")}>
-          <HotspotSheet hotspot={selectedHotspot.props} layerKey={selectedHotspot.layerKey} />
-        </Sheet>
-      )}
 
       {sheet === "layers" && (
-        <Sheet title="道路資訊" onClose={() => setSheet("none")}>
+        <Sheet title="道路資訊" onClose={closeSheet}>
           <LayersSheet layers={layers} onChange={setLayers} zoneCount={zones.features.length} />
         </Sheet>
       )}
@@ -437,7 +402,6 @@ export default function App() {
         <Navigation
           key={navigation.provider.kind}
           route={navigation.route}
-          hitFeatures={navigation.hits}
           provider={navigation.provider}
           map={mapRef}
           destinationName={destination?.label ?? "目的地"}

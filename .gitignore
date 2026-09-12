@@ -42,3 +42,10 @@ DerivedData/
 
 # Hugging Face 上傳用資料夾(權重 + model card)
 huggingface/
+
+# Local working data and mobile build artifacts never belong in this public repo.
+/data/
+*.apk
+*.aab
+*.keystore
+*.jks

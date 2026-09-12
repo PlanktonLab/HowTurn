@@ -1,5 +1,8 @@
+import { isNativeAndroid, nativeGuidance } from './native';
+
 /**
- * Spoken guidance through the Web Speech API. Mobile browsers only allow
+ * Spoken guidance uses Android TTS in APKs and Web Speech in browsers.
+ * Mobile browsers only allow
  * speech that was "unlocked" by a user gesture, so `unlock()` is called from
  * the 開始導航 tap; everything after that can speak freely.
  */
@@ -10,11 +13,11 @@ class Voice {
   private lastAt = 0;
 
   get supported() {
-    return typeof window !== "undefined" && "speechSynthesis" in window;
+    return isNativeAndroid || (typeof window !== "undefined" && "speechSynthesis" in window);
   }
 
   unlock() {
-    if (!this.supported) return;
+    if (!this.supported || isNativeAndroid) return;
     try {
       const u = new SpeechSynthesisUtterance(" ");
       u.volume = 0;
@@ -37,7 +40,17 @@ class Voice {
 
   setMuted(m: boolean) {
     this.muted = m;
-    if (m && this.supported) window.speechSynthesis.cancel();
+    if (m && this.supported) {
+      if (isNativeAndroid) void nativeGuidance.stopSpeaking().catch(() => {});
+      else window.speechSynthesis.cancel();
+    }
+  }
+
+  stop() {
+    this.lastText = "";
+    this.lastAt = 0;
+    if (isNativeAndroid) void nativeGuidance.stopSpeaking().catch(() => {});
+    else if (this.supported) window.speechSynthesis.cancel();
   }
 
   get isMuted() {
@@ -50,6 +63,10 @@ class Voice {
     if (text === this.lastText && Date.now() - this.lastAt < 8000) return;
     this.lastText = text;
     this.lastAt = Date.now();
+    if (isNativeAndroid) {
+      void nativeGuidance.speak({ text, interrupt: opts.interrupt ?? false }).catch(() => {});
+      return;
+    }
     if (opts.interrupt) window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     u.lang = "zh-TW";

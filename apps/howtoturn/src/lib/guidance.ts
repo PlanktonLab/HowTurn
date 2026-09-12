@@ -1,8 +1,6 @@
-import nearestPointOnLine from "@turf/nearest-point-on-line";
-import { feature } from "@turf/helpers";
 import type { Lane, RouteStep } from "./mapboxDirections";
 import type { Progress } from "./routeProgress";
-import type { HotspotProps, LeftTurn, RouteOption } from "./types";
+import type { LeftTurn, RouteOption } from "./types";
 import { cleanRoadName, formatDistance, leftTurnAdvice, phraseForStep, spokenDistance } from "./instructions";
 import { angleDiff360 } from "./twoStageLeft";
 
@@ -19,7 +17,6 @@ export interface Guidance {
   lanes: Lane[] | null;
   /** the maneuver after the upcoming one, when it follows closely */
   next: { step: RouteStep; leftTurn: LeftTurn | null } | null;
-  hotspotAlert: boolean;
   speedLimitKph: number | null;
   say: { text: string; interrupt?: boolean } | null;
 }
@@ -28,7 +25,6 @@ const APPROACH_M = 300;
 const ENTER_M = 60;
 const WAIT_RADIUS_M = 12;
 const DONE_HOLD_MS = 4000;
-const HOTSPOT_M = 80;
 const ARRIVE_M = 25;
 const LANES_SHOW_M = 400;
 const NEXT_CHIP_M = 200;
@@ -47,7 +43,6 @@ const TIERS: { key: string; at: number; minStep: number }[] = [
 export class GuidanceEngine {
   private fired = new Set<string>();
   private active: { lt: LeftTurn; phase: TwoStagePhase; doneAt: number } | null = null;
-  private hotspotAlongM: number[];
   private started = false;
   private arrivedSaid = false;
 
@@ -57,7 +52,6 @@ export class GuidanceEngine {
 
   constructor(
     route: RouteOption,
-    hotspots: GeoJSON.Feature<GeoJSON.Point, HotspotProps>[],
     stepStart: (i: number) => number,
     totalM: number,
     opts: { silentStart?: boolean } = {}
@@ -66,11 +60,6 @@ export class GuidanceEngine {
     this.route = route;
     this.stepStart = stepStart;
     this.totalM = totalM;
-    const line = feature(route.geometry);
-    this.hotspotAlongM = hotspots
-      .filter((h) => h.properties.risk_level === "high" || h.properties.risk_level === "extreme")
-      .map((h) => nearestPointOnLine(line, h, { units: "meters" }).properties.location ?? Infinity)
-      .sort((a, b) => a - b);
   }
 
   private leftTurnFor(stepIndex: number): LeftTurn | null {
@@ -103,7 +92,7 @@ export class GuidanceEngine {
         arrived: true,
         maneuver: null,
         banner: { title: "抵達", text: "目的地就在附近", tone: "default" },
-        advice: null, twoStage: null, lanes: null, next: null, hotspotAlert: false,
+        advice: null, twoStage: null, lanes: null, next: null,
         speedLimitKph: null,
         say: say.length ? { text: say.join("，"), interrupt } : null,
       };
@@ -167,14 +156,6 @@ export class GuidanceEngine {
       }
     }
 
-    // ---------- hotspots ----------
-    const nextHot = this.hotspotAlongM.find((h) => h >= p.distanceAlongM - 5);
-    const hotspotAlert = nextHot != null && nextHot - p.distanceAlongM <= HOTSPOT_M;
-    if (hotspotAlert && !this.fired.has(`hot:${nextHot}`)) {
-      this.fired.add(`hot:${nextHot}`);
-      say.push("前方路口事故較多，請放慢速度");
-    }
-
     // ---------- banner ----------
     let banner: Guidance["banner"];
     let twoStage: Guidance["twoStage"] = null;
@@ -231,7 +212,6 @@ export class GuidanceEngine {
       twoStage,
       lanes,
       next,
-      hotspotAlert,
       speedLimitKph,
       say: say.length ? { text: say.join("。"), interrupt } : null,
     };
@@ -257,6 +237,10 @@ function announcementFor(step: RouteStep, lt: LeftTurn | null, tier: string, dis
     if (tier === "now") return `現在左轉${into}`;
     if (tier === "near") return `左轉${into}`;
     return `${spokenDistance(dist)}後左轉${into}，可直接左轉，請提前靠左`;
+  }
+  if (lt?.status === "unknown") {
+    const prefix = tier === "now" || tier === "near" ? "前方" : `${spokenDistance(dist)}後`;
+    return `${prefix}左轉${into}，待轉限制尚未確認，請依現場標誌行駛`;
   }
   const phrase = phraseForStep(step, lt);
   if (step.maneuverType === "arrive") return tier === "far" || tier === "mid" ? `${spokenDistance(dist)}後${phrase}` : phrase;

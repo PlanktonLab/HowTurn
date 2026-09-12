@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
 import {
   ArrowUp, ArrowLeft, ArrowRight, ArrowUpLeft, ArrowUpRight, CornerUpLeft, CornerUpRight,
-  Undo2, RotateCcw, Flag, Bike, AlertTriangle, X, Volume2, VolumeX, LocateFixed, FlaskConical, Satellite,
+  Undo2, RotateCcw, Flag, Bike, X, Volume2, VolumeX, LocateFixed, FlaskConical, Satellite,
 } from "lucide-react";
 import type { MapViewHandle } from "./MapView";
 import type { Lane, LaneIndication, RouteStep } from "../lib/mapboxDirections";
-import type { HotspotProps, RouteOption } from "../lib/types";
+import type { RouteOption } from "../lib/types";
 import type { LocationProvider } from "../lib/location";
 import { SimulatedProvider } from "../lib/location";
 import { RouteTracker, type Progress } from "../lib/routeProgress";
@@ -16,12 +16,10 @@ import { acquireWakeLock } from "../lib/wakeLock";
 
 export interface RerouteResult {
   option: RouteOption;
-  hits: GeoJSON.Feature<GeoJSON.Point, HotspotProps>[];
 }
 
 interface Props {
   route: RouteOption;
-  hitFeatures: GeoJSON.Feature<GeoJSON.Point, HotspotProps>[];
   provider: LocationProvider;
   map: RefObject<MapViewHandle | null>;
   destinationName: string;
@@ -38,18 +36,19 @@ const GPS_LOST_MS = 8000;
 type GpsStatus = "ok" | "weak" | "lost";
 
 export default function Navigation({
-  route, hitFeatures, provider, map, destinationName, freeLook, onReroute, onRouteReplaced, onEnd,
+  route, provider, map, destinationName, freeLook, onReroute, onRouteReplaced, onEnd,
 }: Props) {
   const routeRef = useRef(route);
   const tracker = useRef(new RouteTracker(route.geometry, route.steps));
   const engine = useRef<GuidanceEngine>(
-    new GuidanceEngine(route, hitFeatures, (i) => tracker.current.stepStart(i), tracker.current.totalM)
+    new GuidanceEngine(route, (i) => tracker.current.stepStart(i), tracker.current.totalM)
   );
   const progressRef = useRef<Progress | null>(null);
   const target = useRef<{ along: number; speed: number; onRoute: boolean; raw: [number, number]; heading: number | null; acc: number; receivedAt: number } | null>(null);
   const display = useRef({ along: 0, lng: route.geometry.coordinates[0][0], lat: route.geometry.coordinates[0][1], bearing: 0, init: false });
   const lastFrame = useRef(performance.now());
   const rerouting = useRef(false);
+  const session = useRef(0);
   const lastRerouteAt = useRef(0);
   const lastArrowIdx = useRef(-1);
   const lastFixAt = useRef(Date.now());
@@ -67,7 +66,7 @@ export default function Navigation({
   function replaceRoute(r: RerouteResult) {
     routeRef.current = r.option;
     tracker.current = new RouteTracker(r.option.geometry, r.option.steps);
-    engine.current = new GuidanceEngine(r.option, r.hits, (i) => tracker.current.stepStart(i), tracker.current.totalM, { silentStart: true });
+    engine.current = new GuidanceEngine(r.option, (i) => tracker.current.stepStart(i), tracker.current.totalM, { silentStart: true });
     lastArrowIdx.current = -1;
     if (provider instanceof SimulatedProvider) provider.setRoute(r.option.geometry);
     callbacks.current.onRouteReplaced(r);
@@ -77,24 +76,29 @@ export default function Navigation({
     if (rerouting.current) return;
     const far = p.offRouteM > 100;
     if (!far && Date.now() - lastRerouteAt.current < REROUTE_COOLDOWN_MS) return;
+    const currentSession = session.current;
     rerouting.current = true;
     setIsRerouting(true);
     try {
       const bearing = p.fix.headingDeg ?? display.current.bearing;
       const r = await callbacks.current.onReroute({ lng: p.fix.lng, lat: p.fix.lat }, bearing);
+      if (currentSession !== session.current) return;
       if (r) {
         replaceRoute(r);
         voice.speak("已重新規劃路線", { interrupt: true });
       }
     } finally {
-      rerouting.current = false;
-      lastRerouteAt.current = Date.now();
-      setIsRerouting(false);
+      if (currentSession === session.current) {
+        rerouting.current = false;
+        lastRerouteAt.current = Date.now();
+        setIsRerouting(false);
+      }
     }
   }
 
   // ---------- GPS fixes → progress → guidance ----------
   useEffect(() => {
+    const currentSession = ++session.current;
     const releaseWakeLock = acquireWakeLock();
     provider.start(
       (fix) => {
@@ -148,6 +152,8 @@ export default function Navigation({
       if (Date.now() - lastFixAt.current > GPS_LOST_MS) setGps("lost");
     }, 2000);
     return () => {
+      session.current = currentSession + 1;
+      voice.stop();
       provider.stop();
       releaseWakeLock();
       window.clearInterval(lostTimer);
@@ -235,12 +241,7 @@ export default function Navigation({
 
         {guidance?.lanes && <LaneStrip lanes={guidance.lanes} />}
 
-        {!arrived && guidance?.hotspotAlert && (
-          <div className="nav-chip nav-chip-alert">
-            <AlertTriangle size={13} strokeWidth={2.4} /> 前方路口事故較多，放慢速度
-          </div>
-        )}
-        {!arrived && !guidance?.hotspotAlert && guidance?.next && (
+        {!arrived && guidance?.next && (
           <div className="nav-chip">接下來 · {phraseForStep(guidance.next.step, guidance.next.leftTurn)}</div>
         )}
       </div>

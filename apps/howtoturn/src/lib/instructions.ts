@@ -77,7 +77,7 @@ export function leftTurnAdvice(lt: LeftTurn): { short: string; long: string; ton
     case "direct":
       return { short: "可直接左轉 · 靠左", long: "此路口可直接左轉，請提前靠左", tone: "green" };
     default:
-      return { short: "依路口標誌待轉", long: "此路口沒有待轉資料，請依路口標誌決定是否待轉", tone: "neutral" };
+      return { short: "待轉待確認", long: "此轉向的待轉限制尚未確認，請依現場標誌行駛", tone: "neutral" };
   }
 }
 

@@ -1,28 +1,5 @@
-export type TravelMode = "motorcycle" | "car" | "walking";
+export type TravelMode = "motorcycle";
 
-export interface HotspotProps {
-  hotspot_id: string;
-  hotspot_type: "intersection" | "road_segment";
-  county: string;
-  township: string | null;
-  road_or_intersection: string;
-  accident_count: number;
-  motorcycle_accident_count: number;
-  motorcycle_accident_ratio: number;
-  pedestrian_accident_count: number;
-  pedestrian_accident_ratio: number;
-  death_count: number;
-  injury_count: number;
-  fatal_accident_count: number;
-  risk_score: number;
-  risk_level: "low" | "medium" | "high" | "extreme";
-  confidence: "confirmed" | "probable" | "low_confidence";
-  source: string;
-  motorcycle_risk_score?: number;
-  pedestrian_risk_score?: number;
-  major_axis_m?: number;
-  aspect_ratio?: number;
-}
 
 /**
  * One 待轉格 detected by DieTurn (YOLO OBB on 2025 Taipei orthophotos).
@@ -82,9 +59,9 @@ export interface CrosswalkProps {
  * required — a 待轉格 serving this exact approach exists: two-stage left turn.
  * direct   — surveyed on imagery we trust (survey_recall >= 0.75) and no box
  *            serves this approach.
- * unknown  — never imaged, OR imaged only on low-recall imagery whose silence
- *            is not evidence of absence. Either way we refuse to promise a
- *            direct left.
+ * unknown  — never imaged, imaged only on low-recall imagery, OR a nearby box
+ *            has ambiguous direction/detection confidence. In each case we
+ *            refuse to promise either a mandatory wait or a direct left.
  */
 export type TwoStageStatus = "required" | "direct" | "unknown";
 
@@ -113,7 +90,6 @@ export interface RouteOption {
   durationMin: number;
   distanceKm: number;
   geometry: GeoJSON.LineString;
-  stats: RouteRiskStats;
   steps: import("./mapboxDirections").RouteStep[];
   /** per-segment congestion (aligned with geometry.coordinates, length n-1) */
   congestion: import("./mapboxDirections").Congestion[];
@@ -123,18 +99,4 @@ export interface RouteOption {
   leftTurns: LeftTurn[];
   /** the 待轉格 polygons this route will actually use (status = required) */
   waitingZones: GeoJSON.Feature<GeoJSON.Polygon, WaitingZoneProps>[];
-}
-
-export interface RouteRiskStats {
-  totalHotspots: number;
-  highOrExtreme: number;
-  extreme: number;
-  motorcycleHotspots: number;
-  pedestrianHotspots: number;
-  deathsAlongRoute: number;
-  injuriesAlongRoute: number;
-  /** Sum of risk_score over hotspots the route passes — a route that goes
-   *  through fewer *and* less severe locations scores lower. Used to rank
-   *  candidate routes, since in dense Taipei almost every route passes some. */
-  exposureScore: number;
 }
